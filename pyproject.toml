@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aihub-code"
+version = "0.1.0"
+description = "A Claude-Code-style coding CLI for local and cloud models, built on AIhub's engine"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "aihub-code contributors" }]
+requires-python = ">=3.10"
+dependencies = [
+    "aihub @ git+https://github.com/marceljurgiel/AIhub-TUI@v1.5.0",
+    "typer>=0.9.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+aihub-code = "aihub_code.cli:app"
+aihub-code-bridge = "aihub_code.bridge:main"
+
+[tool.setuptools]
+packages = ["aihub_code", "aihub_code.engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
