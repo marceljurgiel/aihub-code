@@ -35,6 +35,8 @@ export interface PanelCtx {
   controller: Controller;
   session: SessionLike;
   arg?: string;
+  /** The models window opened while a turn runs (the controller's panel.viewOnly). */
+  viewOnly?: boolean;
 }
 
 export type PanelFactory = (close: (result?: string) => void) => ReactNode;
@@ -104,13 +106,8 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
         <ModelPickerModal
           currentModel={s.modelName}
           installedSet={new Set<string>()}
-          viewOnly={s.streaming}
-          onPick={(name, backend) => {
-            // Until Task 4's useModel (backend + stream model): an Ollama model
-            // starts a new code session on it, as `/model <name>` does.
-            if (backend === "ollama") void c.switchModel(name);
-            else soon(c, `Using ${name} through its API`);
-          }}
+          viewOnly={!!ctx.viewOnly}
+          onPick={(name, backend, streamModel) => void c.useModel({ name, backend, streamModel })}
           onClose={() => close()}
         />
       );
@@ -172,7 +169,7 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
           onEngineChanged={(change) => {
             if (change.ollamaChanged) soon(c, "Checking the models on the new Ollama server");
           }}
-          onTemperature={(t) => soon(c, `Temperature → ${t.toFixed(1)}`)}
+          onTemperature={(t) => void c.setTemperature(t)}
           onClose={() => close()}
         />
       );
@@ -180,7 +177,7 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
       return (close) => <ThemeModal onSave={(name) => soon(c, `Saving the theme ${name}`)} onClose={() => close()} />;
     case "temperature":
       return (close) => (
-        <TemperatureModal value={s.temperature} onSave={(t) => soon(c, `Temperature → ${t.toFixed(1)}`)} onClose={() => close()} />
+        <TemperatureModal value={s.temperature} onSave={(t) => void c.setTemperature(t)} onClose={() => close()} />
       );
     case "palette":
       return (close) => <PaletteModal onAction={(action) => runAction(c, action)} onClose={() => close()} />;

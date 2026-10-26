@@ -5,8 +5,6 @@
  * from it.
  *
  * Fields the controller doesn't track yet get AIhub's defaults (initialSession):
- *  - backend "ollama", streamModel = the model (Task 4 adds the backend);
- *  - temperature 0.7 (Task 4 adds setTemperature and the saved value);
  *  - memoryEnabled / toolsEnabled true (Task 10, from config);
  *  - knowledge [] (Task 7).
  * The code agent is shown as AIhub's agent mode named "code", its submode
@@ -22,8 +20,9 @@ export function toSessionLike(s: ControllerState): SessionLike {
   return {
     ...initialSession(),
     modelName: s.model || null,
-    streamModel: s.model,
-    backend: "ollama",
+    streamModel: s.streamModel || s.model,
+    backend: s.backend,
+    temperature: s.temperature,
     contextLength: ctx,
     ctxMax: ctx,
     ctxUsed: s.ctx.used,

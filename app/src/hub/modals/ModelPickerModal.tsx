@@ -103,6 +103,11 @@ export function ModelPickerModal({
   const [query, setQuery] = useState("");
   const [note, setNote] = useState(viewOnly ? VIEW_ONLY : "");
   const [loading, setLoading] = useState(true);
+  // aihub-code: the turn that made the window view-only is over — the note
+  // that said so goes with it.
+  useEffect(() => {
+    if (!viewOnly) setNote((n) => (n === VIEW_ONLY ? "" : n));
+  }, [viewOnly]);
 
   const [installed, setInstalled] = useState<Array<{ name: string; size_gb: number }>>([]);
   const [cloud, setCloud] = useState<Array<any>>([]);

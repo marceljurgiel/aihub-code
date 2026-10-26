@@ -33,6 +33,13 @@ const panel = (id: PanelId): CommandFn => (c) => void c.openPanel(id);
 const panelOr = (id: PanelId, form: (c: Controller, arg: string) => void): CommandFn => (c, arg) =>
   arg.trim() ? form(c, arg.trim()) : void c.openPanel(id);
 
+/** `/temp 0.3`: AIhub's text form (a comma is a decimal point). */
+function temp(c: Controller, arg: string): Promise<void> | void {
+  const t = Number(arg.replace(",", "."));
+  if (!Number.isFinite(t) || t < 0 || t > 2) return c.error("Temperature is a number from 0 to 2, e.g. /temp 0.3");
+  return c.setTemperature(t);
+}
+
 export const COMMANDS: Command[] = [
   { name: "help", args: "[keys]", help: "Show the commands and keys", run: panelOr("help", (c) => help(c)) },
   { name: "mode", args: "[plan|build|auto]", help: "Show or change the mode", run: (c, arg) => c.mode(arg) },
@@ -58,7 +65,7 @@ export const COMMANDS: Command[] = [
   { name: "memory", args: "[save|clear|undo]", help: "Edit what AIhub remembers about you", run: panelOr("memory", (c, a) => soon(c, `/memory ${a}`)) },
   { name: "settings", help: "Ollama server, default model, memory, tools", run: panel("settings") },
   { name: "theme", args: "[name]", help: "Colours of AIhub's windows", run: panelOr("theme", (c, a) => soon(c, `/theme ${a}`)) },
-  { name: "temp", args: "[value]", help: "Temperature → /temp 0.3 (or pick)", run: panelOr("temperature", (c, a) => soon(c, `/temp ${a}`)) },
+  { name: "temp", args: "[value]", help: "Temperature → /temp 0.3 (or pick)", run: panelOr("temperature", (c, a) => temp(c, a)) },
   { name: "exit", help: "Leave aihub-code", run: (c) => c.exit() },
 ];
 

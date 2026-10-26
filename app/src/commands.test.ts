@@ -168,7 +168,7 @@ describe("AIhub's windows", () => {
 
   test("a text form a later task brings says so and opens nothing", async () => {
     const m = await started();
-    for (const cmd of ["/temp 0.3", "/theme nord", "/schedule run daily", "/memory undo"]) {
+    for (const cmd of ["/theme nord", "/schedule run daily", "/memory undo"]) {
       const out = await m.run(cmd);
       expect(out.join(" ")).toBe(`${cmd} — coming in this release`);
       expect(m.c.getState().panel).toBeNull();

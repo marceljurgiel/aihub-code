@@ -37,7 +37,7 @@ export function PanelHost({ controller, width, rows }: PanelHostProps) {
   const st = useController(controller);
   const { panel } = st;
   if (!panel) return null;
-  const render = panelFactory(panel.id, { controller, session: toSessionLike(st), arg: panel.arg });
+  const render = panelFactory(panel.id, { controller, session: toSessionLike(st), arg: panel.arg, viewOnly: panel.viewOnly });
   return (
     <ShellContext.Provider value={{ footer: true, height: rows, width }}>
       <box width={width} height={rows} flexShrink={0} flexDirection="column">

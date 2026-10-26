@@ -52,6 +52,9 @@ export interface Bridge {
   onDead?(fn: (err: Error) => void): void;
 }
 
+/** Where a model runs: on the Ollama server, or behind a provider's API. */
+export type Backend = "ollama" | "api";
+
 export type Phase = "starting" | "idle" | "running" | "permission" | "picker" | "error";
 
 export interface SuggestedRule {
@@ -116,6 +119,11 @@ export interface ControllerState {
   phase: Phase;
   mode: Mode;
   model: string;
+  /** How the model is reached, and the name the engine streams it under. */
+  backend: Backend;
+  streamModel: string;
+  /** The sampling temperature (the engine's config; `/temp`). */
+  temperature: number;
   sessionId: string;
   ctx: { used: number; limit: number };
   activity: { label: string; since: number } | null;
@@ -163,6 +171,9 @@ const CLOUD_TAG = /:(?:[^:]*-)?cloud$/;
 const withTag = (name: string): string => (name.includes(":") ? name : `${name}:latest`);
 
 interface BeginOptions {
+  /** The model's backend and stream name (a model picked from the API list). */
+  backend?: Backend;
+  streamModel?: string;
   /** Write a divider instead of the header: the conversation continues below. */
   divider?: "clear" | "model";
 }
@@ -181,6 +192,9 @@ export class Controller {
     phase: "starting",
     mode: "build",
     model: "",
+    backend: "ollama",
+    streamModel: "",
+    temperature: 0.7,
     sessionId: "",
     ctx: { used: 0, limit: 0 },
     activity: null,
@@ -230,6 +244,12 @@ export class Controller {
 
   private set(patch: Partial<ControllerState>): void {
     this.state = { ...this.state, ...patch };
+    // The models window opened view-only while a turn ran is a normal one
+    // again once the turn is over: this is the one source of "view only".
+    const { panel, phase } = this.state;
+    if (panel?.viewOnly && phase !== "running" && phase !== "permission") {
+      this.state = { ...this.state, panel: { id: panel.id, ...(panel.arg === undefined ? {} : { arg: panel.arg }) } };
+    }
     for (const fn of [...this.listeners]) fn();
   }
 
@@ -393,6 +413,8 @@ export class Controller {
       mode: opts.mode ?? this.startArgs.mode,
       mcp,
       knowledge: kb,
+      ...(opts.backend ? { backend: opts.backend } : {}),
+      ...(opts.streamModel ? { stream_model: opts.streamModel } : {}),
     });
     this.turnsSent = 0;
     this.resumed = false;
@@ -433,6 +455,9 @@ export class Controller {
       picker: null,
       mode,
       model,
+      backend: info.backend === "api" ? "api" : "ollama",
+      streamModel: String(info.stream_model || model),
+      temperature: typeof info.temperature === "number" ? info.temperature : this.state.temperature,
       sessionId: String(info.session_id ?? ""),
       ctx: { used: 0, limit: Number(info.context_length) || 0 },
       todos: [],
@@ -929,6 +954,35 @@ export class Controller {
       this.set({ activity: null });
       this.drainQueue(); // prompts typed meanwhile (the picker, if open, still holds them)
     }
+  }
+
+  /** A model picked in the models window: a new code session on it, with its
+   *  backend and stream name (the old session stays resumable). Chat and agent
+   *  kinds switch in place instead (Task 5). */
+  async useModel(choice: { name: string; backend: Backend; streamModel?: string }): Promise<void> {
+    if (!this.canSwitch()) return;
+    await this.replaceSession(() =>
+      this.startSession(choice.name, false, {
+        mode: this.state.mode,
+        divider: "model",
+        backend: choice.backend,
+        streamModel: choice.streamModel,
+      }),
+    );
+  }
+
+  /** `/temp 0.7`, Temperature window, Settings: rounds to 0.1, saves it as the
+   *  engine's default (the next turn reads it) and says so. */
+  async setTemperature(t: number): Promise<void> {
+    const v = Math.round(t * 10) / 10;
+    try {
+      await this.o.bridge.request("config.set", { patch: { temperature: v } });
+    } catch (e) {
+      this.error(`Saving the temperature: ${errText(e)}`);
+      return;
+    }
+    this.set({ temperature: v });
+    this.note(`Temperature \u2192 ${v.toFixed(1)}.`);
   }
 
   /** Nothing can start a turn while a list loads, but if one did, the picker

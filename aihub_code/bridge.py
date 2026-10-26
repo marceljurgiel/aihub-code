@@ -172,6 +172,13 @@ def _rule_dict(r) -> Dict[str, Any]:
     return {"tool": r.tool, "pattern": r.pattern, "scope": r.scope}
 
 
+def _temperature() -> float:
+    """The sampling temperature every code turn reads fresh from the engine's
+    config (`config.set` changes it for the next turn)."""
+    from aihub.config import config
+    return float(config.temperature)
+
+
 def _code_info(s) -> Dict[str, Any]:
     pr = s.project
     return {
@@ -181,6 +188,8 @@ def _code_info(s) -> Dict[str, Any]:
         "mode": s.mode, "model": s.model,
         "rules": [_rule_dict(r) for r in s.rules.all()],
         "context_length": s.context_length,
+        "backend": s.backend, "stream_model": s.stream_model,
+        "temperature": _temperature(),
         "checkpoints": {"mode": s.checkpoints.mode, "note": s.checkpoints.note},
     }
 
