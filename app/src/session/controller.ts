@@ -211,6 +211,9 @@ interface Turn {
   streamed: boolean;
   /** A prompt's turn (not a compaction): its end is learned from. */
   prompt: boolean;
+  /** A fatal chat_error came: the engine stopped the turn (its done carries
+   *  no error, and the messages end without a reply). */
+  failed: boolean;
 }
 
 export class Controller {
@@ -622,7 +625,7 @@ export class Controller {
   /** A streaming call the engine runs on the session (a turn, a compaction):
    *  one at a time, cancellable, its events drawn by onEvent. */
   private startStream(method: string, params: Record<string, unknown>, label: string, hub: HubChat | null = null, prompt = false): void {
-    const turn: Turn = { handle: null, cancelled: false, streamer: new MarkdownStreamer(this.o.width()), hub, streamed: false, prompt };
+    const turn: Turn = { handle: null, cancelled: false, streamer: new MarkdownStreamer(this.o.width()), hub, streamed: false, prompt, failed: false };
     this.turn = turn;
     this.set({ phase: "running", activity: { label, since: this.now() } });
     turn.handle = this.o.bridge.stream(method, params, (event, data) => this.onEvent(turn, event, data));
@@ -694,6 +697,7 @@ export class Controller {
         break;
       case "chat_error":
         this.flush(turn);
+        if (data.fatal !== false) turn.failed = true;
         this.error(String(data.message ?? "error"));
         break;
       case "permission_request":
@@ -768,7 +772,9 @@ export class Controller {
     this.turn = null;
     if (turn.hub) this.hubTurnDone(turn.hub, data, turn.cancelled);
     else if (turn.prompt) this.learner.codeTurn(data?.messages, this.state.model, this.state.sessionId, !turn.cancelled);
-    if (turn.prompt && !turn.cancelled) this.emptyAnswerNote(data?.messages);
+    // A turn the engine stopped on an error has said why (AIhub's error path
+    // never reaches the note either).
+    if (turn.prompt && !turn.cancelled && !turn.failed) this.emptyAnswerNote(data?.messages);
     this.set({ phase: "idle", activity: null, permission: null });
     this.drainQueue();
   }

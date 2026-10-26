@@ -368,6 +368,50 @@ describe("a turn that ends without an answer", () => {
   });
 });
 
+describe("a turn that ends on a fatal error", () => {
+  const NOTE = "The model ended without an answer";
+  test("code: the engine's error is shown, and no empty-answer note after it", async () => {
+    const m = await started();
+    await m.run("go");
+    const turn = m.bridge.lastStream;
+    turn.emit("chat_error", { message: "API error: model not found", fatal: true });
+    turn.finish({ messages: [SYS, { role: "user", content: "go" }], cancelled: false });
+    await settle();
+    expect(m.text()).toContain(`${G.cross} API error: model not found`);
+    expect(m.text()).not.toContain(NOTE);
+  });
+  test("chat: the same", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    await m.run("go");
+    const turn = m.bridge.lastStream;
+    turn.emit("chat_error", { message: "Unexpected error: boom", fatal: true });
+    turn.finish({ messages: [SYS, { role: "user", content: "go" }] });
+    await settle();
+    expect(m.text()).toContain("Unexpected error: boom");
+    expect(m.text()).not.toContain(NOTE);
+  });
+  test("a non-fatal error doesn't hide a genuinely empty final reply after tool calls", async () => {
+    const m = await started();
+    await m.run("go");
+    const turn = m.bridge.lastStream;
+    turn.emit("chat_error", { message: "retrying without tools", fatal: false });
+    turn.finish({ messages: [SYS, { role: "user", content: "go" }, { role: "assistant", content: "", tool_calls: [{}] }, { role: "tool", content: "x" }, { role: "assistant", content: "" }] });
+    await settle();
+    expect(m.text()).toContain(NOTE);
+  });
+  test("the next turn after a failed one gets the note again when it is empty", async () => {
+    const m = await started();
+    await m.run("a");
+    m.bridge.lastStream.emit("chat_error", { message: "boom", fatal: true });
+    m.bridge.lastStream.finish({ messages: [SYS, { role: "user", content: "a" }] });
+    await m.run("b");
+    m.bridge.lastStream.finish({ messages: [SYS, { role: "user", content: "b" }, { role: "assistant", content: "" }] });
+    await settle();
+    expect(m.text()).toContain(NOTE);
+  });
+});
+
 describe("memory commands", () => {
   test("/memory undo → memory.undo {} and AIhub's line per reverted change", async () => {
     const m = await started();
