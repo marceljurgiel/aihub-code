@@ -8,7 +8,7 @@
 import { G } from "../glyphs";
 import type { Line, Span } from "../scrollback";
 import { palette } from "../theme";
-import { displayWidth, sanitize, splitAtWidth, wrapSpans } from "../width";
+import { displayWidth, sanitize, splitAtWidth, stripCR, wrapSpans } from "../width";
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const HEADING = /^ {0,3}#{1,6}\s+(.*?)(?:\s+#+)?\s*$/;
@@ -64,7 +64,7 @@ export class MarkdownStreamer {
   }
 
   private line(raw: string, out: Line[]): void {
-    const text = sanitize(raw);
+    const text = sanitize(stripCR(raw));
     const fence = FENCE.exec(text);
     if (this.fence) {
       if (fence && fence[1]![0] === this.fence.char && fence[1]!.length >= this.fence.size && text.trim() === fence[1]) {

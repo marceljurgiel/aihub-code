@@ -32,6 +32,12 @@ export const FONT_CHECK: Readonly<Record<string, { consolas: boolean; cascadia: 
   "└": { consolas: true, cascadia: true },
   "◊": { consolas: true, cascadia: true },
   "×": { consolas: true, cascadia: true },
+  "—": { consolas: true, cascadia: true },
+  // What the bridge sanitizer substitutes for control characters (bridge/sanitize.ts).
+  "\u240d": { consolas: false, cascadia: true }, // ␍ (from \r)
+  "\u241b": { consolas: false, cascadia: true }, // ␛ (from ESC)
+  "\u2421": { consolas: false, cascadia: true }, // ␡ (from DEL)
+  "\ufffd": { consolas: false, cascadia: true }, // � (from C1 controls)
   "⠋": { consolas: false, cascadia: true },
   "⠙": { consolas: false, cascadia: true },
   "⠹": { consolas: false, cascadia: true },
@@ -105,6 +111,17 @@ const CONSOLE_SAFE: Partial<Glyphs> = {
 
 export function makeGlyphs(safe: boolean): Glyphs {
   return { ...IDEAL, ...(safe ? CONSOLE_SAFE : {}), spinner: [...(safe ? CONSOLE_SAFE.spinner! : IDEAL.spinner)] };
+}
+
+/** Control pictures (U+2400..241F, U+2421) become the caret form (`^[`, `^M`,
+ * `^?`) and U+FFFD becomes `?`: Consolas has none of them. */
+export function asciiControls(text: string): string {
+  return text.replace(/[\u2400-\u241f\u2421\ufffd]/g, (c) => {
+    const code = c.charCodeAt(0);
+    if (code === 0xfffd) return "?";
+    if (code === 0x2421) return "^?";
+    return "^" + String.fromCharCode(0x40 + (code - 0x2400));
+  });
 }
 
 export function resolveSafe(env: Record<string, string | undefined>, platform: string): boolean {

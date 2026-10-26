@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { FONT_CHECK, G, makeGlyphs, resolveSafe, type Glyphs } from "./glyphs";
+import { asciiControls, FONT_CHECK, G, makeGlyphs, resolveSafe, type Glyphs } from "./glyphs";
 
 const KEYS = Object.keys(makeGlyphs(false)).filter((k) => k !== "spinner") as Exclude<keyof Glyphs, "spinner">[];
 
@@ -63,6 +63,18 @@ describe("glyphs", () => {
     expect(resolveSafe({}, "win32")).toBe(true);
     expect(resolveSafe({}, "linux")).toBe(false);
     expect(resolveSafe({}, "darwin")).toBe(false);
+  });
+
+  test("the characters the bridge sanitizer produces are in the font check", () => {
+    // consola.ttf lacks the control pictures and U+FFFD; Cascadia has them. The
+    // em dash is in both.
+    for (const c of ["\u240d", "\u241b", "\u2421", "\ufffd"]) expect(FONT_CHECK[c]).toEqual({ consolas: false, cascadia: true });
+    expect(FONT_CHECK["—"]).toEqual({ consolas: true, cascadia: true });
+  });
+
+  test("asciiControls maps what the console fonts lack to ASCII", () => {
+    expect(asciiControls("a\u241bb\u2421c\ufffdd\u2403e")).toBe("a^[b^?c?d^Ce");
+    expect(asciiControls("plain — text")).toBe("plain — text");
   });
 
   test("G is one of the two sets", () => {

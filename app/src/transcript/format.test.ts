@@ -353,3 +353,49 @@ describe("fmtHeader", () => {
     expect(line!.find((s) => s.text.includes("gemma4"))?.dim).toBe(true);
   });
 });
+
+// The bridge sanitizer turns "\r" into U+240D, so CRLF output reaches the
+// formatters as "line␍\n".
+const CR = "\u240d";
+
+describe("CRLF output (the sanitizer's \u240d)", () => {
+  test("shell rows drop the trailing \u240d of every line", () => {
+    const ev: ToolResultEvent = { name: "run_terminal", result: `first${CR}\nsecond${CR}\n[Exit: 0]` };
+    expect(t(fmtToolResult(ev, 80))).toEqual([`  ${G.elbow} first`, "    second  [exit 0]"]);
+  });
+  test("the call line and one-row results drop it too", () => {
+    expect(t(fmtToolCall({ name: "run_terminal", arguments: { command: `ls${CR}\npwd` } }, 80))).toEqual([
+      `${G.bullet} run_terminal ls ${G.ellipsis}`,
+    ]);
+    const err: ToolResultEvent = { name: "read_file", result: `[File Error] nope${CR}\nmore`, error: "x" };
+    expect(t(fmtToolResult(err, 80))).toEqual([`  ${G.elbow} [File Error] nope`]);
+    expect(t(fmtToolResult({ name: "x", result: `done${CR}\n` }, 80))).toEqual([`  ${G.elbow} done`]);
+  });
+  test("diff lines drop it", () => {
+    const d: DiffEvent = { path: "a", text: `--- a\n+++ a\n@@ -1 +1 @@\n-old${CR}\n+new${CR}\n`, added: 1, removed: 1, created: false };
+    expect(t(fmtDiff(d, 80))).toEqual([`  ${G.elbow} -old`, "    +new"]);
+  });
+});
+
+describe("shell [exit N] at narrow widths", () => {
+  const cases: [string, string][] = [
+    ["a long line of output that will not fit", "[Exit: 0]"],
+    ["short", "[Exit: 137]"],
+    ["", "[Exit: TIMEOUT]"],
+  ];
+  for (const width of [20, 14, 10, 8]) {
+    test(`no row is wider than ${width}`, () => {
+      for (const [out, exit] of cases) {
+        const rows = fmtToolResult({ name: "run_terminal", result: `${out}\n${exit}` }, width);
+        expect(wide(rows), JSON.stringify(t(rows))).toBeLessThanOrEqual(width);
+        expect(t(rows).join("\n")).toContain("[");
+      }
+    });
+  }
+  test("the exit code survives, in red when it failed", () => {
+    const rows = fmtToolResult({ name: "run_terminal", result: "boom happened here\n[Exit: 2]" }, 14);
+    expect(t(rows).join(" ")).toContain("[exit 2]");
+    expect(rows.flat().some((s) => s.fg === palette.red && s.text.includes("[exit 2]"))).toBe(true);
+  });
+});
+

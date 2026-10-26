@@ -3,6 +3,7 @@
  * take two cells, combining marks none. Pure helpers shared by the formatters
  * and the scrollback sink.
  */
+import { asciiControls, SAFE_GLYPHS } from "./glyphs";
 import type { Line, Span } from "./scrollback";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -52,13 +53,18 @@ export function truncateStart(text: string, max: number): string {
 const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-_]?/g;
 
 /** Tool output and model text are untrusted: no escapes or control codes may
- * reach the terminal through the transcript. Tabs become four spaces. */
-export function sanitize(text: string): string {
-  return text
+ * reach the terminal through the transcript. Tabs become four spaces. With
+ * console-safe glyphs the bridge's control pictures (␛ ␡ �) turn into ASCII. */
+export function sanitize(text: string, safe: boolean = SAFE_GLYPHS): string {
+  const clean = text
     .replace(ESCAPES, "")
     .replace(/\t/g, "    ")
     .replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g, "");
+  return safe ? asciiControls(clean) : clean;
 }
+
+/** The bridge sanitizer turns "\r" into U+240D: drop it where a CRLF line ends. */
+export const stripCR = (line: string): string => line.replace(/\u240d+$/, "");
 
 const sameStyle = (a: Span, b: Span) => a.fg === b.fg && !!a.bold === !!b.bold && !!a.dim === !!b.dim;
 

@@ -115,3 +115,14 @@ describe("MarkdownStreamer: safety", () => {
     }
   });
 });
+
+describe("MarkdownStreamer: the sanitizer's \u240d", () => {
+  test("a CRLF line ending split across chunks leaves no \u240d", () => {
+    expect(all(80, ["hello\u240d", "\nworld\u240d\n"])).toEqual(["hello", "world"]);
+  });
+  test("also on the unfinished last line and inside code", () => {
+    expect(all(80, ["tail\u240d"])).toEqual(["tail"]);
+    expect(all(80, ["```\u240d\ncode\u240d\n```\u240d\n"])).toEqual([`${G.bar} code`]);
+  });
+});
+

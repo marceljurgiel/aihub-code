@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { G } from "../glyphs";
 import type { Line, Span } from "../scrollback";
 import { palette } from "../theme";
-import { lineWidth, sanitize, truncate, truncateStart, wrapSpans, displayWidth } from "../width";
+import { lineWidth, sanitize, stripCR, truncate, truncateStart, wrapSpans, displayWidth } from "../width";
 import type { CompactionEvent, DiffEvent, HeaderInfo, TodoItem, ToolCallEvent, ToolResultEvent } from "./events";
 
 const FIRST = "  "; // result rows hang under the call line:
@@ -18,8 +18,11 @@ const MORE = "    "; //                           "    " the rest
 const dim = (text: string): Span => ({ text, dim: true });
 const red = (text: string): Span => ({ text, fg: palette.red });
 
+/** The lines of untrusted text: no escapes, no CRLF leftovers (see stripCR). */
+const linesOf = (text: string): string[] => text.split("\n").map((l) => sanitize(stripCR(l)));
+
 /** One logical line of untrusted text: no escapes, no line breaks. */
-const oneLine = (text: unknown): string => sanitize(String(text ?? "")).replace(/\n/g, " ");
+const oneLine = (text: unknown): string => linesOf(String(text ?? "")).join(" ");
 
 function prefixed(rows: Span[][]): Line[] {
   return rows.map((row, i) => [{ text: i === 0 ? ELBOW() : MORE }, ...row]);
@@ -61,7 +64,7 @@ function mainArg(ev: ToolCallEvent): { text: string; path: boolean } {
     return { text: oneLine(q ? `${str("pattern")} "${q}"` : str("pattern")), path: false };
   }
   if (ev.name === "run_terminal" || ev.name === "run_shell") {
-    const [first = "", ...rest] = sanitize(str("command")).split("\n");
+    const [first = "", ...rest] = linesOf(str("command"));
     return { text: rest.length ? `${first} ${G.ellipsis}` : first, path: false };
   }
   const first = Object.values(args).find((v) => typeof v === "string" && v.trim() !== "");
@@ -86,28 +89,38 @@ export function fmtToolCall(ev: ToolCallEvent, width: number): Line[] {
 const EXIT = /\n?\[Exit: ([^\]]*)\]\s*$/;
 const FAILURE_TAG = /^\[(?:[\w ]+ )?Error\]/;
 
-const firstLine = (text: string): string => sanitize(text).split("\n").find((l) => l.trim() !== "") ?? "";
+const firstLine = (text: string): string => linesOf(text).find((l) => l.trim() !== "") ?? "";
 
 function oneRow(spans: Span[], width: number, text: string): Line[] {
   return [[{ text: ELBOW() }, ...spans, { text: truncate(text, Math.max(1, width - displayWidth(ELBOW()))) }]];
 }
 
-/** Rows of a shell result: the last 3 output lines, the exit code on the last. */
+/** Rows of a shell result: the last 3 output lines, the exit code on the last.
+ * The `[exit N]` tag shrinks when the terminal is narrow, and goes on a row of
+ * its own when the output line would be left with no room. */
 function shellRows(result: string, exit: string, width: number): Line[] {
-  const body = result.replace(EXIT, "");
-  const lines = sanitize(body)
-    .split("\n")
+  const lines = linesOf(result.replace(EXIT, ""))
     .filter((l) => l.trim() !== "")
     .slice(-3);
-  const ok = exit.trim() === "0";
-  const tag: Span = ok ? dim(`  [exit ${exit.trim()}]`) : red(`  [exit ${exit.trim()}]`);
+  const code = oneLine(exit.trim());
+  const style = (text: string): Span => (code === "0" ? dim(text) : red(text));
   const room = Math.max(1, width - 4);
-  const rows: Span[][] = lines.map((l, i) => {
-    const last = i === lines.length - 1;
-    return [{ text: truncate(l, last ? Math.max(1, room - displayWidth(tag.text)) : room) }];
-  });
-  if (rows.length === 0) return [[{ text: ELBOW() }, { ...tag, text: tag.text.trimStart() }]];
-  rows[rows.length - 1]!.push(tag);
+  const rows: Span[][] = lines.map((l) => [{ text: truncate(l, room) }]);
+  const tags = [`  [exit ${code}]`, ` [exit ${code}]`];
+  const last = rows[rows.length - 1];
+  if (last) {
+    const used = displayWidth(lines[lines.length - 1]!);
+    const fits = tags.find((t) => displayWidth(t) + Math.min(used, 4) <= room);
+    if (fits) {
+      last[0]!.text = truncate(lines[lines.length - 1]!, Math.max(1, room - displayWidth(fits)));
+      last.push(style(fits));
+      return prefixed(rows);
+    }
+  }
+  // No output, or under 4 columns left beside it: the tag alone on a row,
+  // as `[N]` when even that is too wide.
+  const alone = displayWidth(`[exit ${code}]`) <= room ? `[exit ${code}]` : `[${code}]`;
+  rows.push([style(truncate(alone, room))]);
   return prefixed(rows);
 }
 
@@ -146,7 +159,7 @@ export function fmtToolResult(ev: ToolResultEvent, width: number): Line[] {
       return oneRow([], width, `${n} lines`);
     }
   }
-  const lines = sanitize(result).split("\n").filter((l) => l.trim() !== "");
+  const lines = linesOf(result).filter((l) => l.trim() !== "");
   if (lines.length === 0) return oneRow([], width, "(no output)");
   return oneRow([], width, lines.length === 1 ? lines[0]! : `${lines.length} lines`);
 }
@@ -155,7 +168,7 @@ export function fmtToolResult(ev: ToolResultEvent, width: number): Line[] {
 
 export function fmtDiff(diff: DiffEvent, width: number, max = 12): Line[] {
   const room = Math.max(1, width - 4);
-  const raw = sanitize(diff.text).split("\n");
+  const raw = linesOf(diff.text);
   const hasHeader = raw[0]?.startsWith("--- ") && raw[1]?.startsWith("+++ ");
   const body = hasHeader ? raw.slice(2) : raw;
   const changed = body.filter((l) => l.startsWith("+") || l.startsWith("-"));
@@ -200,14 +213,12 @@ export function fmtCompaction(ev: CompactionEvent, limit?: number): Line[] {
 }
 
 export function fmtError(msg: string, width: number): Line[] {
-  return sanitize(msg)
-    .split("\n")
+  return linesOf(msg)
     .flatMap((l, i) => wrapSpans([red(i === 0 ? `${G.cross} ${l}` : `  ${l}`)], width, { indent: "  " }));
 }
 
 export function fmtNote(text: string, width = Infinity): Line[] {
-  return sanitize(text)
-    .split("\n")
+  return linesOf(text)
     .flatMap((l) => (Number.isFinite(width) ? wrapSpans([dim(l)], width) : [[dim(l)]]));
 }
 

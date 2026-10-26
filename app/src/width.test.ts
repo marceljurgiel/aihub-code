@@ -84,3 +84,14 @@ describe("splitAtWidth", () => {
     expect(texts(splitAtWidth([], 10))).toEqual([""]);
   });
 });
+
+describe("sanitize with console-safe glyphs", () => {
+  test("control pictures and the replacement character become ASCII", () => {
+    expect(sanitize("a\u241bb\u2421c\ufffdd", true)).toBe("a^[b^?c?d");
+    expect(sanitize("x\u2403y", true)).toBe("x^Cy");
+  });
+  test("the ideal set keeps them", () => {
+    expect(sanitize("a\u241bb\u2421c\ufffdd", false)).toBe("a\u241bb\u2421c\ufffdd");
+  });
+});
+
