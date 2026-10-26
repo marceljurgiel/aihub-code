@@ -14,7 +14,9 @@ Protocol (newline-delimited JSON, both directions)
 Control messages (target an in-flight streaming request, no reply):
     {"method": "chat.permission", "params": {"request_id": <m>, "allow": bool,
                                              "remember": "session"|"project" (optional),
-                                             "permission_id": <k> (optional)}}
+                                             "permission_id": <k> (optional),
+                                             "message": "<what to do instead>" (optional,
+                                             only read when allow is false)}}
     A `permission_request` event carries "permission_id"; an answer that
     echoes a different id (a late answer to an earlier prompt) is dropped.
     {"method": "chat.cancel",     "params": {"request_id": <m>}}
@@ -109,6 +111,7 @@ _cancel_events: Dict[Any, threading.Event] = {}
 _perm_queues: Dict[Any, "queue.Queue[bool]"] = {}
 _perm_ids: Dict[Any, int] = {}      # request id -> the prompt now waiting for an answer
 _perm_counter = itertools.count(1)
+_MAX_DENIAL_MESSAGE = 2000     # characters of a denial's "do this instead"
 
 
 
@@ -381,7 +384,8 @@ def _turn_registry(req_id):
                 if _perm_ids.get(req_id) == pid:
                     del _perm_ids[req_id]
         if isinstance(item, tuple):
-            return bool(item[0]), item[1] if len(item) > 1 else None
+            out = (bool(item[0]), item[1] if len(item) > 1 else None)
+            return out + (item[2],) if len(item) > 2 else out
         return bool(item), None
 
     try:
@@ -431,7 +435,12 @@ def _dispatch(line: str) -> None:
         if q is not None:
             allow = params.get("allow") is True      # only a JSON true is consent
             remember = params.get("remember")
-            q.put((allow, remember) if isinstance(remember, str) else allow)
+            message = params.get("message")     # user text: why not, or what to do instead
+            message = message.strip()[:_MAX_DENIAL_MESSAGE] if isinstance(message, str) else ""
+            if allow or not message:
+                q.put((allow, remember) if isinstance(remember, str) else allow)
+            else:
+                q.put((False, remember if isinstance(remember, str) else None, message))
         return
     if method == "chat.cancel":
         rid = params.get("request_id")

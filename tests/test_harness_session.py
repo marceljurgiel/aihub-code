@@ -507,3 +507,30 @@ def test_mcp_tool_of_a_server_not_in_the_session_is_refused(proj, monkeypatch, m
          ask=lambda p: asked.append(p) or (True, None))
     assert ran == [] and asked == []
     assert _tool_results(s)[0].startswith("Refused:")
+
+
+@pytest.mark.parametrize("answer", [
+    (False, None, "use pytest -x"),
+    (False, "project", "use pytest -x"),
+])
+def test_denial_with_a_message_tells_the_model_what_to_do(proj, answer):
+    s = CodeSession.start(str(proj), "m", mode="build")
+    outcome, _ = _run(s, FakeBackend([[_edit()], [text("ok, pytest -x")]]), ask=lambda p: answer)
+    assert not outcome.error
+    assert _tool_results(s) == ["[Denied by user] The user said instead: use pytest -x"]
+    assert (proj / "a.txt").read_bytes() == b"one\nold\n"
+    assert s.rules.session == []          # a denial never remembers anything
+
+
+@pytest.mark.parametrize("answer", [
+    (False, None), (False, None, None), (False, None, ""), (False, None, 5),
+    (True, None, "ignored"),
+])
+def test_message_is_ignored_unless_a_denial_with_text(proj, answer):
+    s = CodeSession.start(str(proj), "m", mode="build")
+    _run(s, FakeBackend([[_edit()], [text("done")]]), ask=lambda p: answer)
+    if answer[0] is True:
+        assert (proj / "a.txt").read_bytes() == b"one\nnew\n"
+    else:
+        [result] = _tool_results(s)
+        assert result.startswith("[Denied by user]") and "said instead" not in result

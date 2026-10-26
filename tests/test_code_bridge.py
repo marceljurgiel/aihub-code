@@ -167,6 +167,44 @@ def test_chat_permission_plain_bool_without_remember(monkeypatch):
     assert q.get_nowait() == (True, "session")
 
 
+def test_denial_message_travels_to_the_model(wire, proj, monkeypatch):
+    start(wire, proj)
+    use(monkeypatch, FakeBackend([[_edit()], [text("ok")]]))
+
+    def on_emit(req_id, event, data):
+        if event == "permission_request":
+            bridge._dispatch(json.dumps({"method": "chat.permission", "params": {
+                "request_id": 5, "allow": False, "message": "  use pytest -x  ",
+                "permission_id": data["permission_id"]}}))
+
+    wire["on_emit"] = on_emit
+    call(wire, "code.turn", {"text": "go"}, req_id=5)
+    assert (proj / "a.txt").read_bytes() == b"one\nold\n"
+    tool_msgs = [m["content"] for m in bridge._code.messages if m.get("role") == "tool"]
+    assert tool_msgs == ["[Denied by user] The user said instead: use pytest -x"]
+
+
+def test_chat_permission_message_rules(monkeypatch):
+    import queue
+    q = queue.Queue()
+    monkeypatch.setattr(bridge, "_perm_queues", {9: q})
+
+    def send(**kw):
+        bridge._dispatch(json.dumps({"method": "chat.permission",
+                                     "params": {"request_id": 9, **kw}}))
+        return q.get_nowait()
+
+    assert send(allow=False, message="  do x  ") == (False, None, "do x")
+    assert send(allow=False, message="x" * 5000) == (False, None, "x" * 2000)
+    assert send(allow=False, message="nope", remember="session") == (False, "session", "nope")
+    assert send(allow=False) is False
+    assert send(allow=False, message="   ") is False       # blank
+    assert send(allow=False, message=7) is False            # not a string
+    assert send(allow=False, message=["a"]) is False
+    assert send(allow=True, message="ignored") is True      # consent has no message
+    assert send(allow="false", message="still a denial") == (False, None, "still a denial")
+
+
 def test_cancel_unblocks_permission(wire, proj, monkeypatch):
     start(wire, proj)
     use(monkeypatch, FakeBackend([[_edit()], [text("x")]]))

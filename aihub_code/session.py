@@ -35,6 +35,7 @@ MAX_TOOL_ROUNDS = 60
 TITLE_CHARS = 60
 UNDONE_NOTE = "[The user undid the file changes of that turn.]"
 OTHER_SESSION = "The last change on disk was made in another session; nothing was undone."
+DENIED_INSTEAD = "[Denied by user] The user said instead: {}"
 NO_APPROVER = "Refused: no one to approve this in a non-interactive run."
 MCP_NOT_ENABLED = "Refused: that MCP tool is not enabled for this code session."
 
@@ -331,12 +332,15 @@ class _Hooks:
                 "diff": diff.to_dict() if diff else None,
                 "suggested_rule": asdict(d.suggested_rule) if d.suggested_rule else None,
                 "mode": s.mode, "reason": d.reason})
-            allow, remember = answer
+            allow, remember, *rest = answer
         except Exception as e:
             log.warning("approval failed: %s", e)
             return False
         if allow is not True:            # only an explicit yes is consent
-            return False
+            said = rest[0].strip() if rest and isinstance(rest[0], str) else ""
+            # A denial that says what to do instead: the text becomes the tool
+            # result (run_chat_turn treats a str as a denial).
+            return DENIED_INSTEAD.format(said) if said else False
         if remember in ("session", "project") and d.suggested_rule:
             try:
                 s.rules.add(replace(d.suggested_rule, scope=remember))
