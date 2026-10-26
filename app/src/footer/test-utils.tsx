@@ -83,6 +83,8 @@ export interface MountOptions {
   answers?: Record<string, unknown>;
   /** The terminal's rows, for the footer (a panel takes all but one). */
   rows?: number;
+  /** Does the clipboard hold an image (Ctrl+V)? Default: false. */
+  hasImage?: () => Promise<boolean>;
   /** Default: the providers app.tsx puts around the footer (AIhub's keymap and
    *  bridge), which an opened panel needs. */
   wrap?: (footer: ReactNode, bridge: MockBridge) => ReactNode;
@@ -128,6 +130,7 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
       ctrlCWindowMs={o.ctrlCWindowMs}
       maxHeight={o.maxHeight}
       rows={o.rows}
+      hasImage={o.hasImage ?? (async () => false)}
     />
   );
   const wrap =

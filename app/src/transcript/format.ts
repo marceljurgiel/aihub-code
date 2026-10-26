@@ -43,6 +43,12 @@ export function fmtUser(text: string, width: number): Line[] {
   return out;
 }
 
+/** The images that went with a prompt: `  [image a.png] [image b.png]`, dim. */
+export function fmtAttached(images: readonly { name: string }[], width: number): Line[] {
+  const one = images.map((a) => `[image ${sanitize(a.name)}]`).join(" ");
+  return wrapSpans([dim(one)], Math.max(1, width - 2), { indent: "" }).map((row) => [{ text: "  " }, ...row]);
+}
+
 /** A typed `/command args`, dim, one logical line (the output follows it). */
 export function fmtCommandEcho(text: string, width: number): Line[] {
   const one = sanitize(stripCR(text)).replace(/\s+/g, " ").trim();

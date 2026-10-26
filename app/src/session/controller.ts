@@ -25,6 +25,7 @@ import type { Line, ScrollbackSink } from "../scrollback";
 import type { CompactionEvent, DiffEvent, TodoItem, ToolCallEvent, ToolResultEvent, UndoPlan } from "../transcript/events";
 import {
   fmtCompaction,
+  fmtAttached,
   fmtCommandEcho,
   fmtDiff,
   fmtDivider,
@@ -42,6 +43,8 @@ import {
 import { MarkdownStreamer } from "../transcript/markdown";
 import { exitLine } from "../replay";
 import { sanitize, stripCR } from "../width";
+import type { Attachment } from "../bridge/types";
+import { Attachments } from "./attachments";
 import { agentNote, HubChat, type ChatMessage, type HubKind } from "./hubChat";
 import { CODE, fmtKnowledge, hubDiff, kindHeader, kindLabel, sameKind, type AgentCheck, type Kind } from "./kinds";
 import { fmtMemoryChange, Learner } from "./learn";
@@ -152,6 +155,8 @@ export interface ControllerState {
   /** Text for the prompt box (the skills window's "use"): the footer puts it
    *  there when `seq` changes. */
   prefill: { text: string; seq: number } | null;
+  /** Images waiting for the next turn (the prompt box's chips). */
+  images: Attachment[];
   /** The enabled skills, for the footer's `/skill <name>` suggestions. */
   skills: { name: string; description: string }[];
   /** The knowledge bases this conversation draws on (`/kb`): the code
@@ -243,6 +248,7 @@ export class Controller {
     confirm: null,
     panel: null,
     prefill: null,
+    images: [],
     skills: [],
     knowledge: [],
     mcp: false,
@@ -269,6 +275,9 @@ export class Controller {
   private pickerBack: Phase | null = null;
   // The AIhub conversation in front (chat / agent kinds), or null.
   private hub: HubChat | null = null;
+  // Images waiting for the next turn, and which models are known to see them.
+  private readonly attachments = new Attachments();
+  private vision = new Map<string, boolean>();
   // The code session as it was when another kind came in front.
   // The code session's knowledge bases and MCP as the engine has them (the
   // state mirrors them while the code agent is in front, or the chat's).
@@ -528,6 +537,7 @@ export class Controller {
     const model = String(info.model || fallbackModel);
     const mode = MODES.includes(info.mode) ? (info.mode as Mode) : "build";
     this.modeConfirmed = mode;
+    this.dropImages(); // a new conversation starts without the old one's pending images
     if (opts.divider) {
       this.write(fmtDivider(opts.divider === "model" ? `new session with ${model}` : "new session", this.o.width()));
     } else {
@@ -643,18 +653,29 @@ export class Controller {
    *  the AIhub conversation (`chat.turn`). `wire`: what the model gets when
    *  it isn't what was typed (a /skill's instructions; its echo is written). */
   private sendTurn(text: string, wire?: string): void {
-    if (wire === undefined) this.write([[], ...fmtUser(text, this.o.width())]);
+    // The images waiting go with this turn (a queued prompt takes what is
+    // attached when it goes out).
+    const images = this.attachments.list();
+    const ids = images.map((a) => a.id);
+    if (images.length) {
+      this.attachments.clear();
+      this.set({ images: [] });
+    }
+    if (wire === undefined) {
+      this.write([[], ...fmtUser(text, this.o.width())]);
+      if (images.length) this.write(fmtAttached(images, this.o.width()));
+    }
     const body = wire ?? text;
     const hub = this.state.kind.type === "code" ? null : this.hub;
     if (hub) {
       hub.temperature = this.state.temperature;
       hub.contextLength = this.contextLength();
       hub.toolsEnabled = this.toolsEnabled;
-      this.startStream("chat.turn", hub.params(body, []), "thinking…", hub, true);
+      this.startStream("chat.turn", hub.params(body, ids), "thinking…", hub, true);
       return;
     }
     this.turnsSent++;
-    this.startStream("code.turn", { text: body }, "thinking…", null, true);
+    this.startStream("code.turn", ids.length ? { text: body, images: ids } : { text: body }, "thinking…", null, true);
   }
 
   /** The context the next turn runs with (AIhub's contextLength). */
@@ -1319,6 +1340,70 @@ export class Controller {
     return this.state.kind.type !== "code" && this.hub ? this.hub.messages : this.learner.codeMessages();
   }
 
+  // ── images ─────────────────────────────────────────────────────────────────
+
+  /** Can the model in front read images? Asked once per model. */
+  private async canSee(): Promise<boolean> {
+    const s = this.state;
+    const key = `${s.backend}:${s.streamModel || s.model}`;
+    let ok = this.vision.get(key);
+    if (ok === undefined) {
+      const d = await this.o.bridge.request<{ vision?: boolean }>("vision.check", { model: s.model, stream_model: s.streamModel || s.model, backend: s.backend });
+      ok = !!d?.vision;
+      // Only a yes is kept: the engine answers no when Ollama is slow to say.
+      if (ok) this.vision.set(key, true);
+    }
+    if (!ok) this.error(`${s.model} can't see images \u2014 pick a vision model (/model), e.g. gemma4:cloud`);
+    return ok;
+  }
+
+  private addImages(list: Attachment[]): void {
+    let full = false;
+    for (const a of list) if (!this.attachments.add(a)) full = true;
+    this.set({ images: this.attachments.list() });
+    if (full) this.note("at most 8 images per message");
+  }
+
+  /** Text that is only image paths (typed + Enter, or pasted): attach them.
+   *  True: the text was spoken for (attached, refused for a model that can't
+   *  see, or failed) and must not be sent or pasted. False: it was not image
+   *  files: the caller goes on with it as typed. */
+  async attachPaths(text: string): Promise<boolean> {
+    try {
+      if (!(await this.canSee())) return true;
+      const d = await this.o.bridge.request<{ attachments?: Attachment[] }>("attach.paste", { text });
+      const got = d?.attachments ?? [];
+      if (got.length) this.addImages(got);
+      return got.length > 0;
+    } catch (e) {
+      this.error(`Attaching the image: ${errText(e)}`);
+      return true; // an image that failed is not sent as text
+    }
+  }
+
+  /** Ctrl+V with an image in the clipboard. */
+  async attachClipboard(): Promise<void> {
+    try {
+      if (!(await this.canSee())) return;
+      const d = await this.o.bridge.request<{ attachment?: Attachment }>("attach.clipboard");
+      if (d?.attachment) this.addImages([d.attachment]);
+    } catch (e) {
+      this.error(`Attaching the clipboard image: ${errText(e)}`);
+    }
+  }
+
+  removeLastImage(): void {
+    if (!this.attachments.removeLast()) return;
+    this.set({ images: this.attachments.list() });
+  }
+
+  /** A new conversation (clear, another model or kind): its images go. */
+  private dropImages(): void {
+    if (!this.attachments.list().length) return;
+    this.attachments.clear();
+    this.set({ images: [] });
+  }
+
   /** Put text into the prompt box (the skills window's "use"). */
   prefill(text: string): void {
     this.set({ prefill: { text, seq: (this.state.prefill?.seq ?? 0) + 1 } });
@@ -1572,6 +1657,7 @@ export class Controller {
     const m = this.current();
     if (snap && snap.model === m.model && snap.backend === m.backend && (snap.streamModel || snap.model) === m.streamModel) {
       this.learner.reset(); // the AIhub conversation ends
+      this.dropImages();
       this.set({ kind: CODE, ctx: snap.ctx, knowledge: [...this.codeOpts.knowledge] });
       this.write(fmtDivider(kindHeader(CODE, this.state.mode, m.model), this.o.width()));
       void this.syncMcp(); // /mcp may have changed while another kind was in front
@@ -1597,6 +1683,7 @@ export class Controller {
     if (k.type === "chat") limit = await this.chatContext(m);
     else if (Number(o.check?.context) > 0) limit = Number(o.check!.context);
     this.learner.reset();
+    this.dropImages();
     this.hub = hub;
     // A new chat starts with no knowledge bases (AIhub's new chat does).
     this.set({ kind: k, model: m.model, backend: m.backend, streamModel: m.streamModel, ctx: { used: 0, limit }, knowledge: [] });

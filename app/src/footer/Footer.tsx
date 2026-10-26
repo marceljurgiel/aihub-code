@@ -15,12 +15,13 @@
  * does what the window's Esc does), and this component ignores every key
  * meanwhile.
  */
-import type { TextareaRenderable } from "@opentui/core";
+import { decodePasteBytes, stripAnsiSequences, type PasteEvent, type TextareaRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Controller } from "../session/controller";
 import { kindLabel } from "../session/kinds";
 import { useController } from "../session/useController";
+import { clipboardHasImage, looksLikeImagePaths } from "../hub/clipboard";
 import { sanitize } from "../width";
 import { PanelHost } from "../panels/PanelHost";
 import { ActivityLine } from "./ActivityLine";
@@ -56,6 +57,8 @@ export interface FooterProps {
   permissionQuietMs?: number;
   /** How long "Press Ctrl+C again to exit" stays. */
   ctrlCWindowMs?: number;
+  /** Does the clipboard hold an image (Ctrl+V)? Injectable for tests. */
+  hasImage?: () => Promise<boolean>;
 }
 
 const HISTORY_MAX = 200;
@@ -71,7 +74,7 @@ const HINTS = {
 const DEFAULT_ROWS = 24;
 
 export function Footer(props: FooterProps) {
-  const { controller, width, onHeight, commands = [], maxHeight, now = Date.now, guardMs = 250, permissionQuietMs = PERMISSION_QUIET_MS, ctrlCWindowMs = 2000 } = props;
+  const { controller, width, onHeight, commands = [], maxHeight, now = Date.now, guardMs = 250, permissionQuietMs = PERMISSION_QUIET_MS, ctrlCWindowMs = 2000, hasImage = clipboardHasImage } = props;
   const st = useController(controller);
   const inputRef = useRef<TextareaRenderable | null>(null);
   const [rows, setRows] = useState(1);
@@ -207,11 +210,48 @@ export function Footer(props: FooterProps) {
 
   // ── actions ──────────────────────────────────────────────────────────────
 
+  const attaching = useRef(false); // an image Enter is being answered
+
+  /** A terminal paste of only image paths attaches them; any other paste is
+   *  the box's own. A path the engine refuses is typed in as text. */
+  const onPaste = function (this: unknown, event: PasteEvent) {
+    const text = stripAnsiSequences(decodePasteBytes(event.bytes));
+    if (!looksLikeImagePaths(text)) return;
+    event.preventDefault();
+    const field = this as TextareaRenderable;
+    void controller.attachPaths(text).then((spoken) => {
+      if (!spoken) field.insertText(text.replace(/\s*\r?\n\s*/g, " "));
+    });
+  };
+
   const send = () => {
     const ta = inputRef.current;
     if (!ta) return;
     const text = ta.plainText.trim();
     if (text === "") return;
+    // Only image paths (a file dropped on the terminal, typed over SSH):
+    // attach them instead of sending the path. Anything else goes on as typed.
+    if (looksLikeImagePaths(text)) {
+      if (attaching.current) return;
+      attaching.current = true;
+      ta.setText("");
+      sync();
+      void controller
+        .attachPaths(text)
+        .then((spoken) => {
+          if (!spoken) sendText(text);
+        })
+        .finally(() => {
+          attaching.current = false;
+        });
+      return;
+    }
+    sendText(text);
+  };
+
+  const sendText = (text: string) => {
+    const ta = inputRef.current;
+    if (!ta) return;
     const h = history.current;
     if (h[h.length - 1] !== text) {
       h.push(text);
@@ -278,6 +318,16 @@ export function Footer(props: FooterProps) {
         return controller.exit();
       }
       arm();
+    } else if (key.ctrl && key.name === "v") {
+      // An image in the clipboard attaches; otherwise the key stays as it was.
+      hasImage()
+        .catch(() => false)
+        .then((image) => {
+          if (image) void controller.attachClipboard();
+        });
+    } else if (key.name === "backspace" && !key.ctrl && !key.meta && text === "" && L.st.images.length > 0) {
+      key.preventDefault();
+      controller.removeLastImage();
     } else if (key.ctrl && key.name === "p") {
       // AIhub's command palette: every window and action, by name.
       key.preventDefault();
@@ -315,7 +365,8 @@ export function Footer(props: FooterProps) {
   // are counted (no limit without maxHeight).
   const inner = maxHeight === undefined ? Infinity : Math.max(1, maxHeight - 4);
   const suggestRows = Math.min(MAX_SUGGESTIONS, matches.length, Math.max(0, inner - 1));
-  const inputRows = Math.max(1, Math.min(rows, inner - suggestRows));
+  const chipRows = prompting && st.images.length > 0 ? 1 : 0;
+  const inputRows = Math.max(1, Math.min(rows, inner - suggestRows - chipRows));
   const maxDiff = asking ? Math.max(0, inner - 1 - (st.permission!.suggestedRule ? 3 : 2)) : undefined;
   const permLayout = asking ? permissionLayout(st.permission!, Math.max(1, width - 4), 0, false, maxDiff) : null;
   const boxRows = permLayout
@@ -324,7 +375,7 @@ export function Footer(props: FooterProps) {
       ? pickerInnerRows(st.picker!.items.length, inner) + 2
       : confirming
         ? CONFIRM_ROWS + 2
-        : inputRows + 2;
+        : inputRows + 2 + chipRows;
   const height = paneled ? Math.max(5, (props.rows ?? DEFAULT_ROWS) - 1) : 1 + boxRows + suggestRows + 1;
   // A layout effect: the renderer's footer area is resized in the same commit as
   // the content, not a frame later (a taller footer in a shorter area is squeezed).
@@ -377,6 +428,8 @@ export function Footer(props: FooterProps) {
           initialValue={lastText.current}
           onContentChange={sync}
           onSubmit={send}
+          images={st.images}
+          onPaste={onPaste}
         />
       )}
       {suggestRows > 0 ? <SlashSuggest items={matches} highlight={hiNow} width={width} maxRows={suggestRows} /> : null}
