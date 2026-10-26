@@ -7,6 +7,7 @@
 import type { SlashCommand } from "./footer/SlashSuggest";
 import type { Line, Span } from "./scrollback";
 import type { CommandFn, Controller, PanelId } from "./session/controller";
+import { fmtMemoryChange, type MemoryChange } from "./session/learn";
 import { fmtNote } from "./transcript/format";
 import { displayWidth, sanitize, stripCR, wrapSpans } from "./width";
 
@@ -59,11 +60,13 @@ export const COMMANDS: Command[] = [
   { name: "agent", args: "[code|chat|<name>]", help: "Talk to the code agent, plain chat or an AIhub agent", run: (c, arg) => agent(c, arg) },
   { name: "agents", help: "AIhub's agent profiles", run: panel("agents") },
   { name: "skills", help: "Browse, create and install skills", run: panel("skills") },
+  { name: "skill", args: "<name> [task]", help: "Use a skill → /skill <name> <task>", run: panelOr("skills", (c, a) => skill(c, a)) },
   { name: "mcp", help: "Connections: Google, GitHub and other services", run: panel("mcp") },
   { name: "knowledge", help: "Knowledge bases: search your own documents", run: panel("knowledge") },
   { name: "schedule", args: "[run <name>]", help: "Scheduled tasks: agents on a timetable", run: panelOr("schedule", (c, a) => soon(c, `/schedule ${a}`)) },
   { name: "history", help: "AIhub's saved conversations", run: panel("history") },
-  { name: "memory", args: "[save|clear|undo]", help: "Edit what AIhub remembers about you", run: panelOr("memory", (c, a) => soon(c, `/memory ${a}`)) },
+  { name: "memory", args: "[save|clear|undo]", help: "Edit what AIhub remembers about you", run: panelOr("memory", (c, a) => memory(c, a)) },
+  { name: "memoryadd", help: "Auto-extract facts from this chat → memory", run: (c) => memoryAdd(c) },
   { name: "settings", help: "Ollama server, default model, memory, tools", run: panel("settings") },
   { name: "theme", args: "[name]", help: "Colours of AIhub's windows", run: panelOr("theme", (c, a) => soon(c, `/theme ${a}`)) },
   { name: "temp", args: "[value]", help: "Temperature → /temp 0.3 (or pick)", run: panelOr("temperature", (c, a) => temp(c, a)) },
@@ -117,6 +120,55 @@ function agent(c: Controller, arg: string): Promise<void> | void {
   }
   // AIhub's profile names are lower case (agents.validate).
   return c.setKind({ type: "agent", name: lower, submode: submode === "plan" ? "plan" : "build" });
+}
+
+// ── /skill, /memory ───────────────────────────────────────────────────────────
+
+/** `/skill <name> [task]` (AIhub slash.ts): the first word names the skill. */
+function skill(c: Controller, arg: string): Promise<void> {
+  const sp = arg.search(/\s/);
+  return c.useSkill(sp > 0 ? arg.slice(0, sp) : arg, sp > 0 ? arg.slice(sp + 1).trim() : "");
+}
+
+const failed = (c: Controller, what: string) => (e: unknown) => c.error(`${what} failed: ${e instanceof Error ? e.message : String(e)}`);
+
+/** `/memory save <key> <value> | clear | undo`, with AIhub's texts (ChatScreen handleSlash). */
+async function memory(c: Controller, arg: string): Promise<void> {
+  const word = arg.toLowerCase();
+  if (word === "clear") {
+    await c.request("memory.clear").then(() => c.note("Memory cleared."), failed(c, "Clearing memory"));
+  } else if (word === "undo") {
+    await c.request<{ reverted?: MemoryChange[] }>("memory.undo", {}).then((d) => {
+      const undone = Array.isArray(d?.reverted) ? d.reverted : [];
+      if (!undone.length) return c.note("Nothing to undo — memory hasn't learned anything since the last undo.");
+      for (const u of undone) c.write(fmtMemoryChange({ ...u, op: "undo" }, c.columns()));
+    }, failed(c, "Undoing memory"));
+  } else if (word.startsWith("save ")) {
+    const body = arg.slice("save ".length).trim();
+    const sp = body.search(/\s/);
+    if (sp <= 0) return c.error("Usage: /memory save <key> <value>");
+    const key = body.slice(0, sp);
+    const value = body.slice(sp + 1).trim();
+    await c.request("memory.save_entry", { key, value }).then(() => c.note(`Saved “${key}” to memory.`), failed(c, "Saving to memory"));
+  } else if (word === "save") {
+    c.error("Usage: /memory save <key> <value>");
+  } else {
+    c.error("Unknown /memory subcommand.");
+  }
+}
+
+/** `/memoryadd`: learn from the whole conversation now (memory.extract). It
+ *  asks the memory model, so not while a turn has the model. */
+async function memoryAdd(c: Controller): Promise<void> {
+  if (!c.requireSession()) return;
+  const { phase, model } = c.getState();
+  if (phase === "running" || phase === "permission") return c.note("Finish or interrupt the current turn first (Esc).");
+  if (!model) return c.error("No model selected.");
+  c.note("Extracting facts from this chat…");
+  await c.request<{ ok?: boolean; summary?: string }>("memory.extract", { model, messages: c.conversationMessages() }).then((d) => {
+    if (d?.ok) c.note("Memory updated with extracted facts.");
+    else c.error(String(d?.summary ?? "Extracting memory failed."));
+  }, failed(c, "Extracting memory"));
 }
 
 // ── /undo ─────────────────────────────────────────────────────────────────────

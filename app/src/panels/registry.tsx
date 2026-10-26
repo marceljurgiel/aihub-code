@@ -132,9 +132,10 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
           model={s.modelName}
           backend={s.backend}
           streamModel={streamModel}
-          onUse={(name) => soon(c, `/skill ${name}`)}
-          // AIhub refreshes its slash suggestions here; nothing to refresh yet.
-          onChanged={() => {}}
+          // The window closes itself after onUse; the prompt comes back with this.
+          onUse={(name) => c.prefill(`/skill ${name} `)}
+          // AIhub refreshes its `/skill <name>` suggestions here.
+          onChanged={(all) => c.skillsChanged(all)}
           onClose={() => close()}
         />
       );

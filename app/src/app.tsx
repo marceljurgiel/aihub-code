@@ -212,6 +212,7 @@ export function launch(o: LaunchOptions): Launched {
       </BridgeProvider>
     </AppKeymapProvider>,
   );
-  void controller.start(o.args);
+  // AIhub lists the skills at start for the prompt's `/skill <name>` suggestions.
+  void controller.start(o.args).then(() => controller.refreshSkills());
   return { controller, sink, transcript, closed, shutdown };
 }

@@ -44,6 +44,7 @@ import { exitLine } from "../replay";
 import { sanitize, stripCR } from "../width";
 import { agentNote, HubChat, type ChatMessage, type HubKind } from "./hubChat";
 import { CODE, fmtKnowledge, hubDiff, kindHeader, kindLabel, sameKind, type AgentCheck, type Kind } from "./kinds";
+import { fmtMemoryChange, Learner } from "./learn";
 
 /** What the controller needs of BridgeClient (tests pass a mock). */
 export interface Bridge {
@@ -148,6 +149,11 @@ export interface ControllerState {
   /** The AIhub window open in place of the prompt, or null. `viewOnly`: the
    *  models window opened while a turn ran (look, don't pick). */
   panel: { id: PanelId; arg?: string; viewOnly?: boolean } | null;
+  /** Text for the prompt box (the skills window's "use"): the footer puts it
+   *  there when `seq` changes. */
+  prefill: { text: string; seq: number } | null;
+  /** The enabled skills, for the footer's `/skill <name>` suggestions. */
+  skills: { name: string; description: string }[];
 }
 
 export type PermissionChoice = "yes" | "always" | { no: string | null };
@@ -174,6 +180,9 @@ export interface ControllerOptions {
   /** How long exit() waits for an interrupted turn to end (the engine saves
    *  the session at the turn's end) before it goes anyway. */
   exitGraceMs?: number;
+  /** A scheduled task is using the model (Task 9's scheduler): automatic
+   *  memory waits for it, as it waits for a turn. */
+  taskRunning?: () => boolean;
 }
 
 /** `gemma4:cloud`, `gpt-oss:120b-cloud`: runs on ollama.com. */
@@ -200,6 +209,8 @@ interface Turn {
   hub: HubChat | null;
   /** Text was streamed since the last round (a round's text is then on screen). */
   streamed: boolean;
+  /** A prompt's turn (not a compaction): its end is learned from. */
+  prompt: boolean;
 }
 
 export class Controller {
@@ -221,6 +232,8 @@ export class Controller {
     picker: null,
     confirm: null,
     panel: null,
+    prefill: null,
+    skills: [],
   };
   private listeners = new Set<() => void>();
   private turn: Turn | null = null;
@@ -254,10 +267,23 @@ export class Controller {
   // From AIhub's settings, for chat.turn.
   private toolsEnabled = true;
   private defaultContext = 2048;
+  // Automatic memory: learns after turns, once the user has gone quiet.
+  private readonly learner: Learner;
+  // A /skill's text is being fetched: its turn goes out first.
+  private invoking = false;
 
   constructor(private readonly o: ControllerOptions) {
     // A bridge that dies between turns is said at once, not at the next Enter.
     o.bridge.onDead?.((err) => this.bridgeDied(err));
+    this.learner = new Learner(o.bridge, undefined, {
+      isBusy: () => this.turn !== null || o.taskRunning?.() === true,
+      onChanges: (changes) => {
+        if (!this.exited) for (const c of changes) this.write(fmtMemoryChange(c, this.o.width()));
+      },
+      onError: (text) => {
+        if (!this.exited && !this.o.bridge.deadError()) this.error(text);
+      },
+    });
   }
 
   // ── state ──────────────────────────────────────────────────────────────────
@@ -483,6 +509,8 @@ export class Controller {
       if (project.is_git === false) this.note("not a git repository");
     }
     this.checkpointNote(info.checkpoints?.note);
+    // A new conversation: the one before is learned from now, this one afresh.
+    this.learner.reset();
     if (resumedMessages) this.o.onResume?.(resumedMessages); // before any queued prompt is written
     this.set({
       phase: "idle",
@@ -556,7 +584,7 @@ export class Controller {
   }
 
   private drainQueue(): void {
-    if (this.exited || this.turn || this.modeBusy || this.undoBusy || this.listing || this.switching) return;
+    if (this.exited || this.turn || this.modeBusy || this.undoBusy || this.listing || this.switching || this.invoking) return;
     if (this.state.confirm || this.state.picker || this.state.phase === "starting") return;
     // A turn under an open panel would squeeze into the row above it, and a
     // permission prompt would unmount the window: the queue waits for closePanel.
@@ -569,25 +597,32 @@ export class Controller {
   }
 
   /** A prompt goes to the kind in front: the code session (`code.turn`) or
-   *  the AIhub conversation (`chat.turn`). */
-  private sendTurn(text: string): void {
-    this.write([[], ...fmtUser(text, this.o.width())]);
+   *  the AIhub conversation (`chat.turn`). `wire`: what the model gets when
+   *  it isn't what was typed (a /skill's instructions; its echo is written). */
+  private sendTurn(text: string, wire?: string): void {
+    if (wire === undefined) this.write([[], ...fmtUser(text, this.o.width())]);
+    const body = wire ?? text;
     const hub = this.state.kind.type === "code" ? null : this.hub;
     if (hub) {
       hub.temperature = this.state.temperature;
-      hub.contextLength = this.state.ctx.limit > 0 ? this.state.ctx.limit : this.defaultContext;
+      hub.contextLength = this.contextLength();
       hub.toolsEnabled = this.toolsEnabled;
-      this.startStream("chat.turn", hub.params(text, []), "thinking…", hub);
+      this.startStream("chat.turn", hub.params(body, []), "thinking…", hub, true);
       return;
     }
     this.turnsSent++;
-    this.startStream("code.turn", { text }, "thinking…");
+    this.startStream("code.turn", { text: body }, "thinking…", null, true);
+  }
+
+  /** The context the next turn runs with (AIhub's contextLength). */
+  private contextLength(): number {
+    return this.state.ctx.limit > 0 ? this.state.ctx.limit : this.defaultContext;
   }
 
   /** A streaming call the engine runs on the session (a turn, a compaction):
    *  one at a time, cancellable, its events drawn by onEvent. */
-  private startStream(method: string, params: Record<string, unknown>, label: string, hub: HubChat | null = null): void {
-    const turn: Turn = { handle: null, cancelled: false, streamer: new MarkdownStreamer(this.o.width()), hub, streamed: false };
+  private startStream(method: string, params: Record<string, unknown>, label: string, hub: HubChat | null = null, prompt = false): void {
+    const turn: Turn = { handle: null, cancelled: false, streamer: new MarkdownStreamer(this.o.width()), hub, streamed: false, prompt };
     this.turn = turn;
     this.set({ phase: "running", activity: { label, since: this.now() } });
     turn.handle = this.o.bridge.stream(method, params, (event, data) => this.onEvent(turn, event, data));
@@ -732,8 +767,18 @@ export class Controller {
     if (!turn.cancelled) this.flush(turn);
     this.turn = null;
     if (turn.hub) this.hubTurnDone(turn.hub, data, turn.cancelled);
+    else if (turn.prompt) this.learner.codeTurn(data?.messages, this.state.model, this.state.sessionId, !turn.cancelled);
+    if (turn.prompt && !turn.cancelled) this.emptyAnswerNote(data?.messages);
     this.set({ phase: "idle", activity: null, permission: null });
     this.drainQueue();
+  }
+
+  /** Small models sometimes think, run a tool, and then say nothing
+   *  (ChatScreen's done handler). */
+  private emptyAnswerNote(messages: unknown): void {
+    const last = Array.isArray(messages) ? messages[messages.length - 1] : undefined;
+    if (last && !(last.role === "assistant" && String(last.content || "").trim()))
+      this.error("The model ended without an answer — ask it to continue, or try a bigger model.");
   }
 
   /** The engine's messages become the conversation (an interrupted turn's
@@ -741,10 +786,12 @@ export class Controller {
    *  AIhub's history (autosave), as ChatScreen does after each reply. */
   private hubTurnDone(hub: HubChat, data: any, cancelled: boolean): void {
     hub.accept(data?.messages);
-    if (cancelled || hub !== this.hub) return;
+    if (hub !== this.hub) return;
+    if (cancelled) return this.learner.remember(hub.messages, hub.model, hub.startTime);
     hub.finalize(true).catch((e) => {
       if (!this.exited) this.error(`Saving the chat failed: ${errText(e)}`);
     });
+    this.learner.schedule(hub.messages, hub.model, hub.startTime);
   }
 
   private onFail(turn: Turn, err: unknown): void {
@@ -959,7 +1006,7 @@ export class Controller {
       this.note("answer the undo question first");
       return false;
     }
-    if (this.modeBusy || this.undoBusy || (!allowTurn && (this.turn || phase === "permission"))) {
+    if (this.modeBusy || this.undoBusy || this.invoking || (!allowTurn && (this.turn || phase === "permission"))) {
       this.note("wait for the current turn to finish");
       return false;
     }
@@ -1195,6 +1242,57 @@ export class Controller {
     return id && !this.resumeLineShown.has(id) ? id : "";
   }
 
+  // ── memory and skills ──────────────────────────────────────────────────────
+
+  /** `/skill <name> [task]`: the skill's instructions (skills.invoke, sized
+   *  to the context in use) go to the model as the prompt; the transcript
+   *  keeps what was typed (the command's echo). Between turns only. */
+  async useSkill(name: string, task: string): Promise<void> {
+    if (!this.requireSession() || !this.canSwitch()) return;
+    this.invoking = true;
+    let content: string;
+    try {
+      const d = await this.o.bridge.request<{ content?: string }>("skills.invoke", { name, task, context_length: this.contextLength() });
+      content = String(d?.content ?? "");
+    } catch (e) {
+      this.invoking = false;
+      if (!(this.o.bridge.deadError() && this.state.phase === "error")) this.error(`Using skill ${name} failed: ${errText(e)}`);
+      this.drainQueue();
+      return;
+    }
+    this.invoking = false;
+    if (this.exited) return;
+    const dead = this.o.bridge.deadError();
+    if (dead) return this.bridgeGone(dead);
+    this.sendTurn(`/skill ${name}`, content);
+  }
+
+  /** The conversation in front, as memory.extract reads it: the AIhub chat's
+   *  messages, or the code conversation's user messages. */
+  conversationMessages(): unknown[] {
+    return this.state.kind.type !== "code" && this.hub ? this.hub.messages : this.learner.codeMessages();
+  }
+
+  /** Put text into the prompt box (the skills window's "use"). */
+  prefill(text: string): void {
+    this.set({ prefill: { text, seq: (this.state.prefill?.seq ?? 0) + 1 } });
+  }
+
+  /** The skills for the footer's suggestions (AIhub refreshes them at start). */
+  async refreshSkills(): Promise<void> {
+    try {
+      const d = await this.o.bridge.request<{ skills?: { name: string; description?: string; enabled?: boolean }[] }>("skills.list", {});
+      this.skillsChanged(Array.isArray(d?.skills) ? d.skills : []);
+    } catch (e) {
+      if (!this.exited && !this.o.bridge.deadError()) this.error(`Listing skills failed: ${errText(e)}`);
+    }
+  }
+
+  /** The skills window changed them (its onChanged). */
+  skillsChanged(list: { name: string; description?: string; enabled?: boolean }[]): void {
+    this.set({ skills: list.filter((s) => s.enabled !== false).map((s) => ({ name: String(s.name), description: String(s.description ?? "") })) });
+  }
+
   // ── kinds: the code agent, plain chat, AIhub agents ────────────────────────
 
   /** `/agent code|chat|<profile>`, the agents window. A running turn is
@@ -1255,6 +1353,8 @@ export class Controller {
       hub.load(messages, startTime);
       hub.kind = k;
       const limit = cur.type === "code" ? await this.chatContext(m) : this.state.ctx.limit;
+      // Old messages were already there to learn from; only new ones count.
+      this.learner.reset(messages.filter((x) => x.role === "user").length);
       this.hub = hub;
       this.set({ kind: k, ctx: { used: 0, limit } });
       this.write(fmtDivider(kindHeader(k, this.state.mode, m.model), this.o.width()));
@@ -1309,6 +1409,7 @@ export class Controller {
     const snap = this.codeSnap;
     const m = this.current();
     if (snap && snap.model === m.model && snap.backend === m.backend && (snap.streamModel || snap.model) === m.streamModel) {
+      this.learner.reset(); // the AIhub conversation ends
       this.set({ kind: CODE, ctx: snap.ctx });
       this.write(fmtDivider(kindHeader(CODE, this.state.mode, m.model), this.o.width()));
     } else {
@@ -1332,6 +1433,7 @@ export class Controller {
     let limit = this.state.ctx.limit;
     if (k.type === "chat") limit = await this.chatContext(m);
     else if (Number(o.check?.context) > 0) limit = Number(o.check!.context);
+    this.learner.reset();
     this.hub = hub;
     this.set({ kind: k, model: m.model, backend: m.backend, streamModel: m.streamModel, ctx: { used: 0, limit } });
     this.write(fmtDivider(o.divider ?? kindHeader(k, this.state.mode, m.model), this.o.width()));
@@ -1376,6 +1478,7 @@ export class Controller {
   exit(): void {
     if (this.exited) return;
     this.exited = true;
+    this.learner.cancel(); // AIhub's quit drops a pending learn too
     const turn = this.turn;
     if (!turn?.handle) return this.o.onExit?.();
     this.cancel();

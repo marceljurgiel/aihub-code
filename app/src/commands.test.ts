@@ -125,7 +125,7 @@ describe("routing", () => {
   test("the table: names from the spec, each with help, hints for the footer", () => {
     expect(COMMANDS.map((c) => c.name)).toEqual([
       "help", "mode", "plan", "model", "undo", "compact", "todos", "rules", "sessions", "resume", "clear", "new", "context",
-      "models", "hardware", "agent", "agents", "skills", "mcp", "knowledge", "schedule", "history", "memory", "settings", "theme", "temp",
+      "models", "hardware", "agent", "agents", "skills", "skill", "mcp", "knowledge", "schedule", "history", "memory", "memoryadd", "settings", "theme", "temp",
       "exit",
     ]);
     for (const c of COMMANDS) expect(c.help.length).toBeGreaterThan(5);
@@ -168,7 +168,7 @@ describe("AIhub's windows", () => {
 
   test("a text form a later task brings says so and opens nothing", async () => {
     const m = await started();
-    for (const cmd of ["/theme nord", "/schedule run daily", "/memory undo"]) {
+    for (const cmd of ["/theme nord", "/schedule run daily"]) {
       const out = await m.run(cmd);
       expect(out.join(" ")).toBe(`${cmd} — coming in this release`);
       expect(m.c.getState().panel).toBeNull();

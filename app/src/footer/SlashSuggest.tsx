@@ -10,12 +10,15 @@ export interface SlashCommand {
   hint: string;
 }
 
-/** The commands whose name starts with what is typed; only while the cursor is
- * still in the command word (no space yet). */
+/** The commands whose name starts with what is typed, while the cursor is
+ * still in the command's name: the first word, or a two-word name such as
+ * `skill commit` (AIhub's `/skill <name>` suggestions). Nothing once a space
+ * ends what is typed. */
 export function slashMatches(text: string, commands: readonly SlashCommand[]): SlashCommand[] {
-  if (!text.startsWith("/") || /\s/.test(text)) return [];
+  if (!text.startsWith("/") || /\s$/.test(text)) return [];
   const typed = text.slice(1).toLowerCase();
-  return commands.filter((c) => c.name.toLowerCase().startsWith(typed));
+  const spaced = /\s/.test(typed);
+  return commands.filter((c) => (!spaced || c.name.includes(" ")) && c.name.toLowerCase().startsWith(typed));
 }
 
 export const MAX_SUGGESTIONS = 5;

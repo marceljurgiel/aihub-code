@@ -36,6 +36,7 @@ export const FONT_CHECK: Readonly<Record<string, { consolas: boolean; cascadia: 
   "↓": { consolas: true, cascadia: true },
   "❯": { consolas: false, cascadia: true },
   "—": { consolas: true, cascadia: true },
+  "✻": { consolas: false, cascadia: false },
   // What the bridge sanitizer substitutes for control characters (bridge/sanitize.ts).
   "\u240d": { consolas: false, cascadia: true }, // ␍ (from \r)
   "\u241b": { consolas: false, cascadia: true }, // ␛ (from ESC)
@@ -80,6 +81,8 @@ export interface Glyphs {
   bar: string;
   /** The cursor row of a menu (permission prompt, picker). */
   pointer: string;
+  /** What automatic memory changed (AIhub's memory line). */
+  memory: string;
   spinner: string[];
 }
 
@@ -101,6 +104,7 @@ const IDEAL: Glyphs = {
   sep: "·",
   bar: "│",
   pointer: "❯",
+  memory: "✻",
   spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -112,6 +116,7 @@ const CONSOLE_SAFE: Partial<Glyphs> = {
   boxDone: "[x]",
   cross: "×",
   pointer: ">",
+  memory: "*",
   // The braille spinner becomes a classic | / - \ spinner, frame for frame.
   spinner: ["|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"],
 };

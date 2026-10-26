@@ -17,7 +17,7 @@
  */
 import type { TextareaRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Controller } from "../session/controller";
 import { kindLabel } from "../session/kinds";
 import { useController } from "../session/useController";
@@ -106,7 +106,13 @@ export function Footer(props: FooterProps) {
   const confirming = st.confirm !== null && !asking && !picking && !paneled;
   const prompting = !asking && !picking && !confirming && !paneled;
   const running = st.phase === "running" || st.phase === "permission";
-  const matches = prompting ? slashMatches(typed, commands) : [];
+  // AIhub's `/skill <name>` suggestions follow the commands.
+  const skillHints = st.skills;
+  const allCommands = useMemo(
+    () => (skillHints.length ? [...commands, ...skillHints.map((s) => ({ name: `skill ${s.name}`, hint: s.description }))] : commands),
+    [commands, skillHints],
+  );
+  const matches = prompting ? slashMatches(typed, allCommands) : [];
   const hiNow = Math.min(hi, Math.max(0, matches.length - 1));
 
   // Everything a key handler reads lives here: keys can outrun renders.
@@ -136,6 +142,18 @@ export function Footer(props: FooterProps) {
     ta.gotoBufferEnd();
     sync();
   };
+
+  // Text for the box from elsewhere (the skills window's "use"). A box that is
+  // not showing (the window is still open) comes back with it.
+  const prefillSeq = useRef(0);
+  useLayoutEffect(() => {
+    const p = st.prefill;
+    if (!p || p.seq === prefillSeq.current) return;
+    prefillSeq.current = p.seq;
+    lastText.current = p.text;
+    pos.current = -1;
+    if (prompting) setInput(p.text);
+  }, [st.prefill, prompting]);
 
   // ── ticking, interrupted flag, timers ────────────────────────────────────
 
