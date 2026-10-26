@@ -1,20 +1,28 @@
+/** @jsxImportSource ../hub/jsx */
 /**
  * Draws the open AIhub window (a `controller.panel`) inside the split footer,
  * in place of the prompt box. The window is AIhub's own component (hub/),
- * drawn in the footer-shaped ModalShell (ShellContext): full width, `rows`
- * tall, top and bottom borders only. Its keys are its own keymap layer; its
- * close (Esc) closes the panel.
+ * built by the registry and drawn in the footer-shaped ModalShell
+ * (ShellContext): full width, `rows` tall, top and bottom borders only. Its
+ * keys are its own keymap layer; its close (Esc) closes the panel.
+ *
+ * A window that opens another (Settings → Temperature, Models → a download)
+ * does it through AIhub's ModalProvider, which in the footer shows the top one
+ * in the panel's place.
  *
  * The hub's providers (AppKeymapProvider, BridgeProvider) sit at the app's
  * root (app.tsx), so a window keeps them across re-renders of the footer.
+ * AIhub's field shortcuts (Ctrl+V system paste, Ctrl+A select all) live only
+ * while a window is open: the prompt box keeps its own keys.
  */
+import { FieldShortcuts } from "../hub/keymap/AppKeymap";
 import { useThemeVersion } from "../hub/state/useTheme";
-import { MemoryModal } from "../hub/modals/MemoryModal";
-import { useModalKeys } from "../hub/modals/modalKit";
-import { ModalShell, ShellContext } from "../hub/ui/ModalShell";
-import { theme } from "../hub/theme";
-import type { Controller, PanelId } from "../session/controller";
+import { ModalProvider } from "../hub/state/ModalContext";
+import { ShellContext } from "../hub/ui/ModalShell";
+import type { Controller } from "../session/controller";
 import { useController } from "../session/useController";
+import { panelFactory } from "./registry";
+import { toSessionLike } from "./session-adapter";
 
 export interface PanelHostProps {
   controller: Controller;
@@ -26,24 +34,17 @@ export interface PanelHostProps {
 
 export function PanelHost({ controller, width, rows }: PanelHostProps) {
   useThemeVersion();
-  const { panel } = useController(controller);
+  const st = useController(controller);
+  const { panel } = st;
   if (!panel) return null;
-  const close = (result?: string) => controller.closePanel(result);
+  const render = panelFactory(panel.id, { controller, session: toSessionLike(st), arg: panel.arg });
   return (
-    <ShellContext.Provider value={{ footer: true, height: rows }}>
+    <ShellContext.Provider value={{ footer: true, height: rows, width }}>
       <box width={width} height={rows} flexShrink={0} flexDirection="column">
-        {panel.id === "memory" ? <MemoryModal onClose={() => close()} /> : <NotYet id={panel.id} onClose={() => close()} />}
+        <FieldShortcuts />
+        {/* A new window (palette → models) starts with its own state. */}
+        <ModalProvider key={panel.id}>{render((result) => controller.closePanel(result))}</ModalProvider>
       </box>
     </ShellContext.Provider>
-  );
-}
-
-/** A window that hasn't been brought over yet (the spike ports Memory only). */
-function NotYet({ id, onClose }: { id: PanelId; onClose: () => void }) {
-  useModalKeys([{ key: "escape", run: onClose }]);
-  return (
-    <ModalShell title={id} width={60} hints={[["esc", "close"]]}>
-      <text fg={theme.fg2}>This window isn't in aihub-code yet.</text>
-    </ModalShell>
   );
 }

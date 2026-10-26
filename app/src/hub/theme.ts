@@ -1,5 +1,5 @@
 // Ported from AIhub-TUI v1.5.0 app/src/theme.ts.
-import { RGBA, type ColorInput } from "@opentui/core";
+import { RGBA, TextAttributes, type ColorInput } from "@opentui/core";
 /**
  * AIhub design tokens — shared with the Textual edition's app.tcss so both
  * front-ends speak one visual language.
@@ -209,6 +209,27 @@ export function themeVersion(): number {
 }
 
 applyTheme(DEFAULT_THEME);
+
+// aihub-code (ruling R-T3-1): the terminal theme paints no surfaces, so where
+// AIhub lifts something onto bg3 — a selected row, a keycap — the lift would
+// be invisible. There it is reverse video instead (the terminal's own colours
+// swapped, no colour of ours), and a meter's empty track takes the rule colour.
+
+/** True when the theme's surfaces are see-through (the terminal theme). */
+export function flatTheme(): boolean {
+  return theme.bg3 === "transparent";
+}
+
+/** Text attributes for something AIhub lifts onto bg3 (`on`): reverse video
+ *  in a flat theme, none where bg3 shows. */
+export function lift(on = true): number {
+  return on && flatTheme() ? TextAttributes.INVERSE : 0;
+}
+
+/** A meter's empty track: bg3, or the rule colour where bg3 is see-through. */
+export function track(): ColorInput {
+  return flatTheme() ? theme.border : theme.bg3;
+}
 
 /**
  * The wordmark, carried over verbatim from the Textual edition

@@ -1,14 +1,15 @@
 // Ported from AIhub-TUI v1.5.0 app/src/ui/primitives.tsx.
-import { useEffect, useState, type ReactNode } from "react";
+/** @jsxImportSource ../jsx */
+import { Children, cloneElement, isValidElement, useEffect, useState, type ReactElement, type ReactNode } from "react";
 import type { ColorInput } from "@opentui/core";
-import { theme } from "../theme.ts";
+import { lift, theme, track } from "../theme.ts";
 
 // ── Micro-parts shared by every screen and modal ────────────────────────────
 
 /** A keycap hint, e.g. [^O] or [enter]. */
 export function KeyHint({ k }: { k: string }) {
   return (
-    <span fg={theme.fg1} bg={theme.bg3}>{` ${k} `}</span>
+    <span fg={theme.fg1} bg={theme.bg3} attributes={lift()}>{` ${k} `}</span>
   );
 }
 
@@ -60,9 +61,21 @@ export function ListRow({
       <text>
         <span fg={selected ? theme.accent : theme.border}>{"▎"}</span>
       </text>
-      {children}
+      {lifted(children, selected)}
     </box>
   );
+}
+
+/** aihub-code (R-T3-1): a selected row's text in reverse video where the
+ *  theme's bg3 is see-through (see theme.lift). */
+export function lifted(children: ReactNode, on: boolean): ReactNode {
+  const attr = lift(on);
+  if (!attr) return children;
+  return Children.map(children, (c) => {
+    if (!isValidElement(c)) return c;
+    const el = c as ReactElement<{ attributes?: number }>;
+    return cloneElement(el, { attributes: (el.props.attributes ?? 0) | attr });
+  });
 }
 
 /** Horizontal meter on one text line. */
@@ -80,7 +93,7 @@ export function Meter({
   return (
     <text>
       <span fg={color}>{"━".repeat(filled)}</span>
-      <span fg={theme.bg3}>{"━".repeat(width - filled)}</span>
+      <span fg={track()}>{"━".repeat(width - filled)}</span>
     </text>
   );
 }

@@ -124,7 +124,9 @@ describe("routing", () => {
 
   test("the table: names from the spec, each with help, hints for the footer", () => {
     expect(COMMANDS.map((c) => c.name)).toEqual([
-      "help", "mode", "plan", "model", "undo", "compact", "todos", "rules", "sessions", "resume", "clear", "context", "memory", "exit", "hub",
+      "help", "mode", "plan", "model", "undo", "compact", "todos", "rules", "sessions", "resume", "clear", "new", "context",
+      "models", "hardware", "agents", "skills", "mcp", "knowledge", "schedule", "history", "memory", "settings", "theme", "temp",
+      "exit",
     ]);
     for (const c of COMMANDS) expect(c.help.length).toBeGreaterThan(5);
     expect(SLASH_COMMANDS.map((c) => c.name)).toEqual(COMMANDS.map((c) => c.name));
@@ -137,6 +139,59 @@ describe("/memory", () => {
     const m = await started();
     expect(await m.run("/memory")).toEqual([]);
     expect(m.c.getState().panel).toEqual({ id: "memory" });
+  });
+});
+
+describe("AIhub's windows", () => {
+  const PANELS: Array<[string, string]> = [
+    ["/models", "models"],
+    ["/hardware", "hardware"],
+    ["/agents", "agents"],
+    ["/skills", "skills"],
+    ["/mcp", "mcp"],
+    ["/knowledge", "knowledge"],
+    ["/schedule", "schedule"],
+    ["/history", "history"],
+    ["/settings", "settings"],
+    ["/theme", "theme"],
+    ["/temp", "temperature"],
+    ["/help", "help"],
+    ["/memory", "memory"],
+  ];
+  for (const [cmd, id] of PANELS) {
+    test(`${cmd} with no argument opens the ${id} panel`, async () => {
+      const m = await started();
+      expect(await m.run(cmd)).toEqual([]);
+      expect(m.c.getState().panel).toEqual({ id: id as never });
+    });
+  }
+
+  test("a text form a later task brings says so and opens nothing", async () => {
+    const m = await started();
+    for (const cmd of ["/temp 0.3", "/theme nord", "/schedule run daily", "/memory undo"]) {
+      const out = await m.run(cmd);
+      expect(out.join(" ")).toBe(`${cmd} — coming in this release`);
+      expect(m.c.getState().panel).toBeNull();
+    }
+  });
+
+  test("while a turn runs a window is refused with the note", async () => {
+    const m = await running();
+    await m.run("/settings");
+    expect(m.c.getState().panel).toBeNull();
+    expect(m.sink.lines.join("\n")).toContain("Finish or interrupt the current turn first (Esc).");
+  });
+
+  test("/new is /clear", async () => {
+    const m = await started();
+    await m.run("/new");
+    expect(m.bridge.to("code.start")).toHaveLength(2);
+  });
+
+  test("/hub is gone", async () => {
+    const m = await started();
+    const out = (await m.run("/hub")).join(" ");
+    expect(out).toContain("unknown command /hub");
   });
 });
 
@@ -178,9 +233,9 @@ describe("the echo", () => {
 });
 
 describe("/help", () => {
-  test("lists every command with its arguments and help, then the keys", async () => {
+  test("with an argument: lists every command with its arguments and help, then the keys", async () => {
     const m = await started();
-    const out = (await m.run("/help")).join("\n").replace(/\s+/g, " ");
+    const out = (await m.run("/help keys")).join("\n").replace(/\s+/g, " ");
     for (const c of COMMANDS) {
       expect(out).toContain(`/${c.name}`);
       expect(out).toContain(c.help);
@@ -194,12 +249,12 @@ describe("/help", () => {
 
   test("on a narrow terminal nothing is wider than the screen", async () => {
     const m = await started(30);
-    for (const l of await m.run("/help")) expect(lineText([{ text: l }]).length).toBeLessThanOrEqual(30);
+    for (const l of await m.run("/help keys")) expect(lineText([{ text: l }]).length).toBeLessThanOrEqual(30);
   });
 
   test("works before any session exists", async () => {
     const m = make();
-    m.c.submit("/help");
+    m.c.submit("/help keys");
     await settle();
     expect(m.sink.lines.join("\n")).toContain("/undo");
   });
@@ -800,7 +855,7 @@ describe("/clear", () => {
   });
 });
 
-describe("/exit and /hub", () => {
+describe("/exit", () => {
   test("/exit leaves the app", async () => {
     const m = await started();
     await m.run("/exit");
@@ -814,14 +869,6 @@ describe("/exit and /hub", () => {
     m.bridge.lastStream.finish({ cancelled: true }); // the engine saves the session, then ends the turn
     await settle();
     expect(m.exits).toEqual(["exit"]);
-  });
-
-  test("/hub says where the rest lives", async () => {
-    const m = await started();
-    const out = (await m.run("/hub")).join(" ");
-    expect(out).toContain("aihub");
-    expect(out).toContain("models");
-    expect(out).toContain("knowledge");
   });
 });
 

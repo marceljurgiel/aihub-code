@@ -6,6 +6,8 @@ import { memorySink } from "../scrollback";
 import { commandTable } from "../commands";
 import { Controller } from "../session/controller";
 import { MockBridge } from "../session/mock-bridge";
+import { AppKeymapProvider } from "../hub/keymap/AppKeymap";
+import { adaptBridge, BridgeProvider } from "../hub/state/BridgeContext";
 import { Footer } from "./Footer";
 import type { SlashCommand } from "./SlashSuggest";
 
@@ -81,6 +83,8 @@ export interface MountOptions {
   answers?: Record<string, unknown>;
   /** The terminal's rows, for the footer (a panel takes all but one). */
   rows?: number;
+  /** Default: the providers app.tsx puts around the footer (AIhub's keymap and
+   *  bridge), which an opened panel needs. */
   wrap?: (footer: ReactNode, bridge: MockBridge) => ReactNode;
 }
 
@@ -126,7 +130,14 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
       rows={o.rows}
     />
   );
-  const setup = await testRender(o.wrap ? o.wrap(footer, bridge) : footer, {
+  const wrap =
+    o.wrap ??
+    ((f: ReactNode, b: MockBridge) => (
+      <AppKeymapProvider>
+        <BridgeProvider client={adaptBridge(b)}>{f}</BridgeProvider>
+      </AppKeymapProvider>
+    ));
+  const setup = await testRender(wrap(footer, bridge), {
     width: o.width ?? 80,
     height: o.height ?? 30,
     kittyKeyboard: o.kitty ?? true,

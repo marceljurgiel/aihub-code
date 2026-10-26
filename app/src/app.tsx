@@ -15,7 +15,7 @@ import type { Args } from "./args";
 import { SLASH_COMMANDS, commandTable } from "./commands";
 import { Footer } from "./footer/Footer";
 import { AppKeymapProvider } from "./hub/keymap/AppKeymap";
-import { BridgeProvider } from "./hub/state/BridgeContext";
+import { adaptBridge, BridgeProvider } from "./hub/state/BridgeContext";
 import { clampFooterHeight, debounced, exitLine, footerBudget, messagesToLines, userPrompts } from "./replay";
 import { Transcript, rendererSink, type RendererSink } from "./scrollback";
 import { Controller, type Bridge } from "./session/controller";
@@ -207,7 +207,7 @@ export function launch(o: LaunchOptions): Launched {
   // AIhub's windows (panels) need its keymap and its bridge context.
   createRoot(renderer).render(
     <AppKeymapProvider>
-      <BridgeProvider client={bridge}>
+      <BridgeProvider client={adaptBridge(bridge)}>
         <FooterHost renderer={renderer} controller={controller} history={prompts} />
       </BridgeProvider>
     </AppKeymapProvider>,

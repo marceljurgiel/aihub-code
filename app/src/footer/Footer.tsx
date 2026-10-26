@@ -6,13 +6,14 @@
  *
  * Keys: while the prompt is showing, this component owns them (so a turn that
  * runs never turns typing into shortcuts): Enter sends (or queues), Shift+Tab
- * cycles the mode, Esc / Ctrl+C / Ctrl+D as the spec says, Up/Down walk the
+ * cycles the mode, Ctrl+P opens the palette, Esc / Ctrl+C / Ctrl+D as the spec says, Up/Down walk the
  * history only from the first/last row. The permission prompt and the picker
  * handle their own keys.
  *
  * An open AIhub window (`panel`) takes the box's place and almost the whole
- * terminal (all rows but one); its keys are its own keymap layer, and this
- * component ignores every key meanwhile.
+ * terminal (all rows but one); its keys are its own keymap layer (Ctrl+C there
+ * does what the window's Esc does), and this component ignores every key
+ * meanwhile.
  */
 import type { TextareaRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
@@ -253,6 +254,10 @@ export function Footer(props: FooterProps) {
         return controller.exit();
       }
       arm();
+    } else if (key.ctrl && key.name === "p") {
+      // AIhub's command palette: every window and action, by name.
+      key.preventDefault();
+      controller.openPanel("palette");
     } else if (key.ctrl && key.name === "d") {
       if (text === "") {
         key.preventDefault();

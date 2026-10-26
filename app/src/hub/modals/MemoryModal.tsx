@@ -1,10 +1,11 @@
 // Ported from AIhub-TUI v1.5.0 app/src/modals/MemoryModal.tsx.
+/** @jsxImportSource ../jsx */
 import { useEffect, useRef, useState } from "react";
 import { useTerminalDimensions } from "@opentui/react";
 import type { TextareaRenderable } from "@opentui/core";
 import { theme, fit } from "../theme.ts";
 import { useBridge } from "../state/BridgeContext.tsx";
-import { ModalShell } from "../ui/ModalShell.tsx";
+import { ModalShell, useShellHeight, useShellWidth } from "../ui/ModalShell.tsx";
 import { useModalKeys } from "./modalKit.ts";
 
 /** Long-term memory: the Markdown file the engine injects into every chat
@@ -33,8 +34,8 @@ export function MemoryModal({ onClose }: { onClose: () => void }) {
   // As tall as the terminal allows: memory grows as AIhub learns, and facts
   // below the fold of a fixed 20-row window looked like they weren't saved.
   const { width: termW, height: termH } = useTerminalDimensions();
-  const height = Math.max(16, Math.min(termH - 4, 44));
-  const width = Math.max(60, Math.min(termW - 8, 96));
+  const height = useShellHeight(Math.max(16, Math.min(termH - 4, 44)));
+  const width = useShellWidth(Math.max(60, Math.min(termW - 8, 96)));
 
   useEffect(() => {
     bridge

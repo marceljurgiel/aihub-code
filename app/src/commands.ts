@@ -6,7 +6,7 @@
  */
 import type { SlashCommand } from "./footer/SlashSuggest";
 import type { Line, Span } from "./scrollback";
-import type { CommandFn, Controller } from "./session/controller";
+import type { CommandFn, Controller, PanelId } from "./session/controller";
 import { fmtNote } from "./transcript/format";
 import { displayWidth, sanitize, stripCR, wrapSpans } from "./width";
 
@@ -23,8 +23,18 @@ const dim = (text: string): Span => ({ text, dim: true });
 const oneLine = (t: unknown): string => sanitize(stripCR(String(t ?? ""))).replace(/\n/g, " ");
 const tokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
+/** A command whose text form a later task brings (the panel opens without one). */
+const soon = (c: Controller, what: string) => c.note(`${what} — coming in this release`);
+
+/** Opens an AIhub window; an argument (the window takes none) is ignored. */
+const panel = (id: PanelId): CommandFn => (c) => void c.openPanel(id);
+
+/** Opens an AIhub window without an argument; AIhub's text form with one. */
+const panelOr = (id: PanelId, form: (c: Controller, arg: string) => void): CommandFn => (c, arg) =>
+  arg.trim() ? form(c, arg.trim()) : void c.openPanel(id);
+
 export const COMMANDS: Command[] = [
-  { name: "help", help: "Show the commands and keys", run: (c) => help(c) },
+  { name: "help", args: "[keys]", help: "Show the commands and keys", run: panelOr("help", (c) => help(c)) },
   { name: "mode", args: "[plan|build|auto]", help: "Show or change the mode", run: (c, arg) => c.mode(arg) },
   { name: "plan", help: "Switch to plan mode (no edits)", run: (c) => c.mode("plan") },
   { name: "model", args: "[name]", help: "Choose a model (starts a new session)", run: (c, arg) => c.switchModel(arg.trim()) },
@@ -35,10 +45,21 @@ export const COMMANDS: Command[] = [
   { name: "sessions", help: "Pick an earlier session of this folder", run: (c) => c.openSessions() },
   { name: "resume", args: "[id]", help: "Resume an earlier session", run: (c, arg) => (arg.trim() ? c.resumeSession(arg.trim()) : c.openSessions()) },
   { name: "clear", help: "New session on the same model and mode", run: (c) => c.clear() },
+  { name: "new", help: "Same as /clear", run: (c) => c.clear() },
   { name: "context", help: "Show how much context is used", run: (c) => context(c) },
-  { name: "memory", help: "Edit what AIhub remembers about you", run: (c) => void c.openPanel("memory") },
+  { name: "models", help: "Models: installed, catalog, downloads, context", run: panel("models") },
+  { name: "hardware", help: "What this machine and the Ollama server have", run: panel("hardware") },
+  { name: "agents", help: "AIhub's agent profiles", run: panel("agents") },
+  { name: "skills", help: "Browse, create and install skills", run: panel("skills") },
+  { name: "mcp", help: "Connections: Google, GitHub and other services", run: panel("mcp") },
+  { name: "knowledge", help: "Knowledge bases: search your own documents", run: panel("knowledge") },
+  { name: "schedule", args: "[run <name>]", help: "Scheduled tasks: agents on a timetable", run: panelOr("schedule", (c, a) => soon(c, `/schedule ${a}`)) },
+  { name: "history", help: "AIhub's saved conversations", run: panel("history") },
+  { name: "memory", args: "[save|clear|undo]", help: "Edit what AIhub remembers about you", run: panelOr("memory", (c, a) => soon(c, `/memory ${a}`)) },
+  { name: "settings", help: "Ollama server, default model, memory, tools", run: panel("settings") },
+  { name: "theme", args: "[name]", help: "Colours of AIhub's windows", run: panelOr("theme", (c, a) => soon(c, `/theme ${a}`)) },
+  { name: "temp", args: "[value]", help: "Temperature → /temp 0.3 (or pick)", run: panelOr("temperature", (c, a) => soon(c, `/temp ${a}`)) },
   { name: "exit", help: "Leave aihub-code", run: (c) => c.exit() },
-  { name: "hub", help: "Where models, agents and connections live", run: (c) => hub(c) },
 ];
 
 /** For the footer's suggestions under the box. */
@@ -65,7 +86,7 @@ function help(c: Controller): void {
     }
   }
   lines.push([], [{ text: "Keys", bold: true }]);
-  lines.push(...wrapSpans([dim("  enter send · ctrl+j new line · shift+tab mode · up/down earlier prompts")], width, { indent: "  " }));
+  lines.push(...wrapSpans([dim("  enter send · ctrl+j new line · shift+tab mode · up/down earlier prompts · ctrl+p palette")], width, { indent: "  " }));
   lines.push(...wrapSpans([dim("  esc interrupt · ctrl+c interrupt, clear, exit · ctrl+d exit")], width, { indent: "  " }));
   lines.push(...fmtNote("Shift+Enter needs a terminal with the kitty keyboard protocol; Ctrl+J always adds a line.", width));
   lines.push(...fmtNote("To send text that begins with /, start it with //.", width));
@@ -121,10 +142,4 @@ async function rules(c: Controller, arg: string): Promise<void> {
   if (!rule) return c.note(`no rule ${n} — /rules lists them`);
   await c.request("code.rules.remove", { tool: rule.tool, pattern: rule.pattern, scope: rule.scope });
   c.note(`removed rule ${n}: ${ruleText(rule)}`);
-}
-
-// ── /hub ──────────────────────────────────────────────────────────────────────
-
-function hub(c: Controller): void {
-  c.note("The models catalogue, agents, connections and knowledge bases live in aihub, which shares these settings.");
 }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { IDLE_FOOTER_ROWS } from "../app";
 import { mount, unmount, until, type Mounted } from "../footer/test-utils";
 import { AppKeymapProvider } from "../hub/keymap/AppKeymap";
-import { BridgeProvider } from "../hub/state/BridgeContext";
+import { adaptBridge, BridgeProvider } from "../hub/state/BridgeContext";
 
 const FACTS = "## Editor\nAlex uses Helix.\n\n## Servers\nThe GPU box is gpu-box.lan.\n";
 const ROWS = 30;
@@ -21,7 +21,7 @@ function mountWithPanel(): Promise<Mounted> {
     answers: { "memory.load": { content: FACTS } },
     wrap: (footer, bridge) => (
       <AppKeymapProvider>
-        <BridgeProvider client={bridge}>{footer}</BridgeProvider>
+        <BridgeProvider client={adaptBridge(bridge)}>{footer}</BridgeProvider>
       </AppKeymapProvider>
     ),
   });

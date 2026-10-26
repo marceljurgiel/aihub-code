@@ -126,8 +126,9 @@ export interface ControllerState {
   error: string | null;
   picker: PickerState | null;
   confirm: ConfirmState | null;
-  /** The AIhub window open in place of the prompt, or null. */
-  panel: { id: PanelId; arg?: string } | null;
+  /** The AIhub window open in place of the prompt, or null. `viewOnly`: the
+   *  models window opened while a turn ran (look, don't pick). */
+  panel: { id: PanelId; arg?: string; viewOnly?: boolean } | null;
 }
 
 export type PermissionChoice = "yes" | "always" | { no: string | null };
@@ -745,14 +746,18 @@ export class Controller {
   // ── panels ─────────────────────────────────────────────────────────────────
 
   /** Open an AIhub window in place of the prompt. Not while a turn runs, asks
-   *  for a permission or a picker is open: the window would take their keys. */
+   *  for a permission or a picker is open: the window would take their keys.
+   *  The one exception is the models window while a turn runs: it opens view
+   *  only (no picking until the turn is over), and a permission prompt that
+   *  comes meanwhile is drawn in its place until it is answered. */
   openPanel(id: PanelId, arg?: string): boolean {
     const { phase } = this.state;
-    if (phase === "running" || phase === "permission" || phase === "picker") {
+    const viewOnly = id === "models" && phase === "running";
+    if (!viewOnly && (phase === "running" || phase === "permission" || phase === "picker")) {
       this.note("Finish or interrupt the current turn first (Esc).");
       return false;
     }
-    this.set({ panel: arg === undefined ? { id } : { id, arg } });
+    this.set({ panel: { id, ...(arg === undefined ? {} : { arg }), ...(viewOnly ? { viewOnly } : {}) } });
     return true;
   }
 

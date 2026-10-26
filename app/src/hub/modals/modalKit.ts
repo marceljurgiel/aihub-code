@@ -1,7 +1,8 @@
 // Ported from AIhub-TUI v1.5.0 app/src/modals/modalKit.ts.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useBindings } from "@opentui/keymap/react";
 import { LAYER } from "../keymap/AppKeymap.tsx";
+import { ShellContext } from "../ui/ModalShell.tsx";
 
 export type ModalKey = { key: string; run: () => void; label?: string };
 
@@ -19,6 +20,13 @@ export function useModalKeys(keys: ModalKey[], opts?: { enabled?: () => boolean 
   latest.current = keys;
   const enabledRef = useRef(opts?.enabled);
   enabledRef.current = opts?.enabled;
+  // aihub-code: in the footer, Ctrl+C is the line CLI's "get me out" key; in a
+  // window it does what the window's Esc does (so an "unsaved changes" guard
+  // still asks), unless the window binds Ctrl+C itself.
+  const footer = useContext(ShellContext).footer;
+  const alias = footer && keys.some((k) => k.key === "escape") && !keys.some((k) => k.key === "ctrl+c");
+  if (alias) keys = [...keys, { key: "ctrl+c", run: () => {} }];
+  const target = (key: string) => (alias && key === "ctrl+c" ? "escape" : key);
   useBindings(
     () => ({
       priority: LAYER.modal,
@@ -27,7 +35,7 @@ export function useModalKeys(keys: ModalKey[], opts?: { enabled?: () => boolean 
       enabled: () => enabledRef.current?.() ?? true,
       commands: keys.map((k) => ({
         name: `modal.${k.key}`,
-        run: () => latest.current.find((x) => x.key === k.key)?.run(),
+        run: () => latest.current.find((x) => x.key === target(k.key))?.run(),
       })),
       bindings: keys.map((k) => ({ key: k.key, cmd: `modal.${k.key}` })),
     }),
