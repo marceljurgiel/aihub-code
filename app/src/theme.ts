@@ -36,18 +36,24 @@ export function configPath(home: string = homedir()): string {
   return join(home, ".aihub", "config.yaml");
 }
 
-/** The accent colour named by `accent:` in a config file, if it is one of
- * AIhub's accents; undefined for anything else (missing file, unknown name). */
-export function accentFromConfig(path: string = configPath()): string | undefined {
+/** A top-level scalar of a config file, lower-cased; undefined when the file
+ * or the key is missing (an indented key belongs to another section). */
+export function configKey(key: "accent" | "theme", path: string = configPath()): string | undefined {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
   } catch {
     return undefined;
   }
-  // A top-level key only: an indented "accent:" belongs to another section.
-  const m = /^accent:[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s#]*))/m.exec(text);
-  const name = (m?.[1] ?? m?.[2] ?? m?.[3] ?? "").trim().toLowerCase();
+  const m = new RegExp(`^${key}:[ \\t]*(?:"([^"]*)"|'([^']*)'|([^\\s#]*))`, "m").exec(text);
+  if (!m) return undefined;
+  return (m[1] ?? m[2] ?? m[3] ?? "").trim().toLowerCase();
+}
+
+/** The accent colour named by `accent:` in a config file, if it is one of
+ * AIhub's accents; undefined for anything else (missing file, unknown name). */
+export function accentFromConfig(path: string = configPath()): string | undefined {
+  const name = configKey("accent", path) ?? "";
   return Object.hasOwn(ACCENTS, name) ? (ACCENTS as Record<string, string>)[name] : undefined;
 }
 

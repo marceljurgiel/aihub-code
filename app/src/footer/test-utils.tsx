@@ -79,7 +79,9 @@ export interface MountOptions {
   /** Start the session (default); false leaves the controller as constructed. */
   start?: boolean | Partial<Args>;
   answers?: Record<string, unknown>;
-  wrap?: (footer: ReactNode) => ReactNode;
+  /** The terminal's rows, for the footer (a panel takes all but one). */
+  rows?: number;
+  wrap?: (footer: ReactNode, bridge: MockBridge) => ReactNode;
 }
 
 export async function mount(o: MountOptions = {}): Promise<Mounted> {
@@ -121,9 +123,10 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
       permissionQuietMs={o.permissionQuietMs ?? o.guardMs ?? 0}
       ctrlCWindowMs={o.ctrlCWindowMs}
       maxHeight={o.maxHeight}
+      rows={o.rows}
     />
   );
-  const setup = await testRender(o.wrap ? o.wrap(footer) : footer, {
+  const setup = await testRender(o.wrap ? o.wrap(footer, bridge) : footer, {
     width: o.width ?? 80,
     height: o.height ?? 30,
     kittyKeyboard: o.kitty ?? true,

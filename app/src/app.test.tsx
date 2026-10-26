@@ -153,6 +153,35 @@ describe("the app on a split-footer renderer", () => {
     expect(rows.indexOf(rows.find((r) => r.includes("aihub-code"))!)).toBeLessThan(rows.findIndex((r) => r.includes("> a long")));
   });
 
+  test("/memory: AIhub's window fills all rows but one, follows a resize, and Esc gives the prompt back", async () => {
+    const t = await run({ width: 60, height: 20, answers: { "memory.load": { content: "## Editor\nAlex uses Helix.\n" } } });
+    await t.scrolled();
+    await t.setup.mockInput.typeText("/memory");
+    t.setup.mockInput.pressEnter();
+    await until(() => t.frame().includes("Alex uses Helix."), t.settle);
+    expect(t.setup.renderer.footerHeight).toBe(19);
+    expect(t.frame()).toContain("Memory");
+    // A resize while the panel is open: it re-lays out at once, but the
+    // transcript is not written into the one row left above it (the terminal
+    // drops what scrolls out of so small an area) ...
+    t.setup.resize(50, 16);
+    await until(() => t.setup.renderer.footerHeight === 15, t.settle);
+    expect(t.frame()).toContain("Alex uses Helix.");
+    await sleep(80);
+    await t.settle();
+    expect(t.resets).toEqual([]);
+    // ... it is written once the panel closes and the footer is small again.
+    t.setup.mockInput.pressEscape();
+    await until(() => t.resets.length > 0, t.settle);
+    expect(t.resets).toEqual([{ clearSavedLines: true }]);
+    expect(t.setup.renderer.footerHeight).toBe(5);
+    expect(t.app.controller.getState().panel).toBeNull();
+    expect(t.frame()).toContain("shift+tab mode");
+    const text = (await t.scrolled()).join("\n");
+    expect(text.match(/aihub-code/g)).toHaveLength(1);
+    expect(text).toContain("> /memory");
+  });
+
   test("exit: terminal restored, bridge closed, then the resume line", async () => {
     const t = await run();
     await t.setup.mockInput.typeText("hi");

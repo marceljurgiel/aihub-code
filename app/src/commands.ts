@@ -36,6 +36,7 @@ export const COMMANDS: Command[] = [
   { name: "resume", args: "[id]", help: "Resume an earlier session", run: (c, arg) => (arg.trim() ? c.resumeSession(arg.trim()) : c.openSessions()) },
   { name: "clear", help: "New session on the same model and mode", run: (c) => c.clear() },
   { name: "context", help: "Show how much context is used", run: (c) => context(c) },
+  { name: "memory", help: "Edit what AIhub remembers about you", run: (c) => void c.openPanel("memory") },
   { name: "exit", help: "Leave aihub-code", run: (c) => c.exit() },
   { name: "hub", help: "Where models, agents and connections live", run: (c) => hub(c) },
 ];

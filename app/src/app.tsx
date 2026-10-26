@@ -14,6 +14,8 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Args } from "./args";
 import { SLASH_COMMANDS, commandTable } from "./commands";
 import { Footer } from "./footer/Footer";
+import { AppKeymapProvider } from "./hub/keymap/AppKeymap";
+import { BridgeProvider } from "./hub/state/BridgeContext";
 import { clampFooterHeight, debounced, exitLine, footerBudget, messagesToLines, userPrompts } from "./replay";
 import { Transcript, rendererSink, type RendererSink } from "./scrollback";
 import { Controller, type Bridge } from "./session/controller";
@@ -110,6 +112,7 @@ function FooterHost({ renderer, controller, history }: { renderer: CliRenderer; 
       }}
       commands={SLASH_COMMANDS}
       history={prompts}
+      rows={rows}
     />
   );
 }
@@ -125,8 +128,17 @@ export function launch(o: LaunchOptions): Launched {
 
   // A resize leaves ghost footer rows behind: wait until it settles, clear,
   // and write the whole transcript again at the new width.
+  // An open panel leaves one row above the footer, and what scrolls out of so
+  // small an area never reaches the terminal's scrollback: the replay waits
+  // until the panel closes and the footer is small again.
+  let replayAfterPanel = false;
   const replay = debounced(() => {
-    if (!done) sink.replay({ clearSavedLines: true });
+    if (done) return;
+    if (controller.getState().panel) {
+      replayAfterPanel = true;
+      return;
+    }
+    sink.replay({ clearSavedLines: true });
   }, o.resizeQuietMs ?? RESIZE_QUIET_MS);
   // The renderer also says "resize" when only the footer's height changed (every
   // time the prompt grows a row): that is no reason to clear the screen.
@@ -150,6 +162,13 @@ export function launch(o: LaunchOptions): Launched {
       prompts.set(userPrompts(messages));
     },
     onExit: () => shutdown(),
+  });
+
+  controller.subscribe(() => {
+    if (replayAfterPanel && !controller.getState().panel) {
+      replayAfterPanel = false;
+      replay(); // debounced: by then the footer has shrunk (a layout effect)
+    }
   });
 
   // A signal leaves as /exit does (a running turn is interrupted and its end
@@ -188,7 +207,14 @@ export function launch(o: LaunchOptions): Launched {
     }
   }
 
-  createRoot(renderer).render(<FooterHost renderer={renderer} controller={controller} history={prompts} />);
+  // AIhub's windows (panels) need its keymap and its bridge context.
+  createRoot(renderer).render(
+    <AppKeymapProvider>
+      <BridgeProvider client={bridge}>
+        <FooterHost renderer={renderer} controller={controller} history={prompts} />
+      </BridgeProvider>
+    </AppKeymapProvider>,
+  );
   void controller.start(o.args);
   return { controller, sink, transcript, closed, shutdown };
 }

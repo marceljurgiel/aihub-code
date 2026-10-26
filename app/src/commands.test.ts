@@ -124,11 +124,19 @@ describe("routing", () => {
 
   test("the table: names from the spec, each with help, hints for the footer", () => {
     expect(COMMANDS.map((c) => c.name)).toEqual([
-      "help", "mode", "plan", "model", "undo", "compact", "todos", "rules", "sessions", "resume", "clear", "context", "exit", "hub",
+      "help", "mode", "plan", "model", "undo", "compact", "todos", "rules", "sessions", "resume", "clear", "context", "memory", "exit", "hub",
     ]);
     for (const c of COMMANDS) expect(c.help.length).toBeGreaterThan(5);
     expect(SLASH_COMMANDS.map((c) => c.name)).toEqual(COMMANDS.map((c) => c.name));
     expect(Object.keys(commandTable())).toEqual(COMMANDS.map((c) => c.name));
+  });
+});
+
+describe("/memory", () => {
+  test("opens AIhub's memory window as a panel", async () => {
+    const m = await started();
+    expect(await m.run("/memory")).toEqual([]);
+    expect(m.c.getState().panel).toEqual({ id: "memory" });
   });
 });
 

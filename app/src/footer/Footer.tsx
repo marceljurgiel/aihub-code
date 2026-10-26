@@ -9,6 +9,10 @@
  * cycles the mode, Esc / Ctrl+C / Ctrl+D as the spec says, Up/Down walk the
  * history only from the first/last row. The permission prompt and the picker
  * handle their own keys.
+ *
+ * An open AIhub window (`panel`) takes the box's place and almost the whole
+ * terminal (all rows but one); its keys are its own keymap layer, and this
+ * component ignores every key meanwhile.
  */
 import type { TextareaRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
@@ -16,6 +20,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Controller } from "../session/controller";
 import { useController } from "../session/useController";
 import { sanitize } from "../width";
+import { PanelHost } from "../panels/PanelHost";
 import { ActivityLine } from "./ActivityLine";
 import { CONFIRM_ROWS, ConfirmPrompt } from "./ConfirmPrompt";
 import { PermissionPrompt, permissionLayout } from "./PermissionPrompt";
@@ -36,6 +41,8 @@ export interface FooterProps {
   /** The most rows the footer may take: a short terminal keeps room for the
    *  transcript. Suggestions, input rows, picker rows and diff rows give way. */
   maxHeight?: number;
+  /** The terminal's rows: an open panel makes the footer all but one of them. */
+  rows?: number;
   /** Earlier prompts, oldest first (a resumed session's, for Up). */
   history?: readonly string[];
   /** Milliseconds; injectable for tests. */
@@ -56,7 +63,10 @@ const HINTS = {
   note: "enter send · esc back",
   confirm: "y yes · n no · esc no",
   picker: "↑↓ choose · enter select · esc cancel",
+  panel: "esc close",
 };
+/** Without `rows` (tests of other things): a classic 24-row terminal. */
+const DEFAULT_ROWS = 24;
 
 export function Footer(props: FooterProps) {
   const { controller, width, onHeight, commands = [], maxHeight, now = Date.now, guardMs = 250, permissionQuietMs = PERMISSION_QUIET_MS, ctrlCWindowMs = 2000 } = props;
@@ -88,8 +98,11 @@ export function Footer(props: FooterProps) {
 
   const asking = st.phase === "permission" && st.permission !== null;
   const picking = st.picker !== null;
-  const confirming = st.confirm !== null && !asking && !picking;
-  const prompting = !asking && !picking && !confirming;
+  // A permission prompt or a picker can't start while a panel is open
+  // (openPanel refuses then); if one ever did, it comes first.
+  const paneled = st.panel !== null && !asking && !picking;
+  const confirming = st.confirm !== null && !asking && !picking && !paneled;
+  const prompting = !asking && !picking && !confirming && !paneled;
   const running = st.phase === "running" || st.phase === "permission";
   const matches = prompting ? slashMatches(typed, commands) : [];
   const hiNow = Math.min(hi, Math.max(0, matches.length - 1));
@@ -283,14 +296,14 @@ export function Footer(props: FooterProps) {
       : confirming
         ? CONFIRM_ROWS + 2
         : inputRows + 2;
-  const height = 1 + boxRows + suggestRows + 1;
+  const height = paneled ? Math.max(5, (props.rows ?? DEFAULT_ROWS) - 1) : 1 + boxRows + suggestRows + 1;
   // A layout effect: the renderer's footer area is resized in the same commit as
   // the content, not a frame later (a taller footer in a shorter area is squeezed).
   useLayoutEffect(() => {
     onHeight?.(height);
   }, [height]);
 
-  const hint = armed && prompting ? { text: "Press Ctrl+C again to exit", warn: true } : asking ? { text: noting ? HINTS.note : HINTS.permission } : picking ? { text: HINTS.picker } : confirming ? { text: HINTS.confirm } : null;
+  const hint = armed && prompting ? { text: "Press Ctrl+C again to exit", warn: true } : paneled ? { text: HINTS.panel } : asking ? { text: noting ? HINTS.note : HINTS.permission } : picking ? { text: HINTS.picker } : confirming ? { text: HINTS.confirm } : null;
   const status: StatusInput = {
     mode: st.mode,
     model: sanitize(st.model),
@@ -301,7 +314,7 @@ export function Footer(props: FooterProps) {
 
   return (
     <box flexDirection="column" width={width} height={height} flexShrink={0}>
-      {st.activity && !asking && !picking && !confirming ? (
+      {st.activity && !asking && !picking && !confirming && !paneled ? (
         <ActivityLine activity={st.activity} now={now()} width={width} interruptible={running && !interrupted} />
       ) : (
         <box height={1} flexShrink={0} />
@@ -320,6 +333,8 @@ export function Footer(props: FooterProps) {
         />
       ) : picking ? (
         <Picker picker={st.picker!} width={width} now={now} guardMs={guardMs} onPick={(id) => void controller.pick(id)} maxInner={inner} />
+      ) : paneled ? (
+        <PanelHost controller={controller} width={width} rows={height - 2} />
       ) : confirming ? (
         <ConfirmPrompt confirm={st.confirm!} width={width} now={now} guardMs={guardMs} onAnswer={(yes) => void controller.answerConfirm(yes)} />
       ) : (

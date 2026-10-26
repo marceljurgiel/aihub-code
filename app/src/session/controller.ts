@@ -94,6 +94,24 @@ export interface ConfirmState {
   force: boolean;
 }
 
+/** AIhub's windows, opened as panels above the prompt. */
+export type PanelId =
+  | "memory"
+  | "models"
+  | "hardware"
+  | "agents"
+  | "skills"
+  | "mcp"
+  | "knowledge"
+  | "schedule"
+  | "missed"
+  | "history"
+  | "settings"
+  | "theme"
+  | "temperature"
+  | "palette"
+  | "help";
+
 export interface ControllerState {
   phase: Phase;
   mode: Mode;
@@ -108,6 +126,8 @@ export interface ControllerState {
   error: string | null;
   picker: PickerState | null;
   confirm: ConfirmState | null;
+  /** The AIhub window open in place of the prompt, or null. */
+  panel: { id: PanelId; arg?: string } | null;
 }
 
 export type PermissionChoice = "yes" | "always" | { no: string | null };
@@ -169,6 +189,7 @@ export class Controller {
     error: null,
     picker: null,
     confirm: null,
+    panel: null,
   };
   private listeners = new Set<() => void>();
   private turn: Turn | null = null;
@@ -716,6 +737,27 @@ export class Controller {
       this.modeBusy = false;
       this.drainQueue(); // a prompt typed meanwhile was waiting for the engine
     }
+  }
+
+  // ── panels ─────────────────────────────────────────────────────────────────
+
+  /** Open an AIhub window in place of the prompt. Not while a turn runs, asks
+   *  for a permission or a picker is open: the window would take their keys. */
+  openPanel(id: PanelId, arg?: string): boolean {
+    const { phase } = this.state;
+    if (phase === "running" || phase === "permission" || phase === "picker") {
+      this.note("Finish or interrupt the current turn first (Esc).");
+      return false;
+    }
+    this.set({ panel: arg === undefined ? { id } : { id, arg } });
+    return true;
+  }
+
+  /** Close the open window; a non-empty `result` is said as a note. */
+  closePanel(result?: string): void {
+    if (!this.state.panel) return;
+    this.set({ panel: null });
+    if (result) this.note(result);
   }
 
   // ── commands, exit ─────────────────────────────────────────────────────────
