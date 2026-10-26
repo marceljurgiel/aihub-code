@@ -497,6 +497,9 @@ export class Controller {
   private drainQueue(): void {
     if (this.exited || this.turn || this.modeBusy || this.undoBusy || this.listing) return;
     if (this.state.confirm || this.state.picker || this.state.phase === "starting") return;
+    // A turn under an open panel would squeeze into the row above it, and a
+    // permission prompt would unmount the window: the queue waits for closePanel.
+    if (this.state.panel) return;
     if (!this.state.sessionId || this.o.bridge.deadError()) return;
     const [next, ...rest] = this.state.queue;
     if (next === undefined) return;
@@ -753,11 +756,13 @@ export class Controller {
     return true;
   }
 
-  /** Close the open window; a non-empty `result` is said as a note. */
+  /** Close the open window; a non-empty `result` is said as a note, and what
+   *  was queued meanwhile goes out. */
   closePanel(result?: string): void {
     if (!this.state.panel) return;
     this.set({ panel: null });
     if (result) this.note(result);
+    this.drainQueue();
   }
 
   // ── commands, exit ─────────────────────────────────────────────────────────

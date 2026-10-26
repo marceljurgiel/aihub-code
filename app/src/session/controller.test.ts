@@ -234,6 +234,24 @@ describe("start-up", () => {
   });
 });
 
+describe("panels and the queue", () => {
+  test("a prompt queued while starting waits for an open panel to close", async () => {
+    const { bridge, c } = make();
+    const p = c.start(ARGS);
+    c.submit("early bird");
+    expect(c.openPanel("memory")).toBe(true);
+    await p;
+    await settle();
+    expect(c.getState().phase).toBe("idle");
+    expect(bridge.to("code.turn")).toHaveLength(0);
+    expect(c.getState().queue).toEqual(["early bird"]);
+    c.closePanel();
+    await settle();
+    expect(bridge.to("code.turn")[0]!.params).toEqual({ text: "early bird" });
+    expect(c.getState().queue).toEqual([]);
+  });
+});
+
 describe("a turn", () => {
   test("submit writes the prompt, sends code.turn, and the activity says thinking", async () => {
     const { bridge, c, sink, tick } = await started();

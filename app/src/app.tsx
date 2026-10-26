@@ -129,16 +129,10 @@ export function launch(o: LaunchOptions): Launched {
   // A resize leaves ghost footer rows behind: wait until it settles, clear,
   // and write the whole transcript again at the new width.
   // An open panel leaves one row above the footer, and what scrolls out of so
-  // small an area never reaches the terminal's scrollback: the replay waits
-  // until the panel closes and the footer is small again.
-  let replayAfterPanel = false;
+  // small an area never reaches the terminal's scrollback: no replay while one
+  // is open. Closing it replays anyway (see below), resize or not.
   const replay = debounced(() => {
-    if (done) return;
-    if (controller.getState().panel) {
-      replayAfterPanel = true;
-      return;
-    }
-    sink.replay({ clearSavedLines: true });
+    if (!done && !controller.getState().panel) sink.replay({ clearSavedLines: true });
   }, o.resizeQuietMs ?? RESIZE_QUIET_MS);
   // The renderer also says "resize" when only the footer's height changed (every
   // time the prompt grows a row): that is no reason to clear the screen.
@@ -164,11 +158,14 @@ export function launch(o: LaunchOptions): Launched {
     onExit: () => shutdown(),
   });
 
+  // A panel's tall footer pushed the conversation out of view, and shrinking
+  // back doesn't bring it back: every close writes the transcript again.
+  // Debounced: by then the footer has shrunk (a layout effect).
+  let panelOpen = false;
   controller.subscribe(() => {
-    if (replayAfterPanel && !controller.getState().panel) {
-      replayAfterPanel = false;
-      replay(); // debounced: by then the footer has shrunk (a layout effect)
-    }
+    const open = controller.getState().panel !== null;
+    if (panelOpen && !open) replay();
+    panelOpen = open;
   });
 
   // A signal leaves as /exit does (a running turn is interrupted and its end

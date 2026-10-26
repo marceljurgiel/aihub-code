@@ -34,7 +34,8 @@ export interface Palette {
 
 /** Built-in themes. Each brings its own accent; an accent choice overrides it. */
 export const THEMES: Record<string, { label: string; palette: Palette }> = {
-  // aihub-code (ruling R-P1): the default when config.yaml has no `theme`.
+  // aihub-code (rulings R-P1, R-T2-2): the default when aihub-code's own
+  // settings name no theme (AIhub's config.yaml `theme:` is ignored).
   // Panels sit in the terminal's scrollback flow, so they paint no background
   // and take the terminal's own text colour and palette slots; only the accent
   // is AIhub's.

@@ -3,7 +3,7 @@ import { RGBA } from "@opentui/core";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { configKey } from "../theme";
+import { codeSettingsPath, codeTheme, configKey } from "../theme";
 import { CONSOLE_SAFE_MAP } from "./glyphs";
 import { DEFAULT_THEME, THEMES, activeTheme, applyTheme, theme } from "./theme";
 
@@ -14,9 +14,12 @@ const config = (text: string) => {
   writeFileSync(p, text);
   return p;
 };
-const fromConfig = (text: string) => {
+/** What index.tsx does: aihub-code's own theme setting, AIhub's accent. */
+const fromConfig = (text: string, settings?: string) => {
   const p = config(text);
-  applyTheme(configKey("theme", p), configKey("accent", p));
+  const sp = join(dir, `settings-${n++}.json`);
+  if (settings !== undefined) writeFileSync(sp, settings);
+  applyTheme(codeTheme(sp), configKey("accent", p));
 };
 
 afterEach(() => applyTheme());
@@ -34,16 +37,25 @@ describe("hub theme (ruling R-P1)", () => {
     expect(activeTheme.name).toBe("terminal");
     expect(theme.accent).toBe("#3b82f6");
   });
-  test("a named AIhub theme is used as is; an unknown one falls back to terminal", () => {
-    fromConfig('theme: "Nord"  # mine\n');
+  test("AIhub's own `theme:` in config.yaml is ignored: without an aihub-code setting it is terminal", () => {
+    fromConfig("theme: tokyo-night\naccent: green\n");
+    expect(activeTheme.name).toBe("terminal");
+    expect(theme.bg1).toBe("transparent");
+    expect(theme.accent).toBe("#10b981");
+  });
+  test("aihub-code's own setting picks an AIhub theme; an unknown or broken one is terminal", () => {
+    fromConfig("theme: tokyo-night\n", '{"theme":"nord"}');
     expect(activeTheme.name).toBe("nord");
     expect(theme.bg1).toBe(THEMES.nord!.palette.bg1);
-    fromConfig("theme: neon\n");
+    fromConfig("", '{"theme":"neon"}');
+    expect(activeTheme.name).toBe("terminal");
+    fromConfig("", "{not json");
+    expect(activeTheme.name).toBe("terminal");
+    fromConfig("", '{"theme":7}');
     expect(activeTheme.name).toBe("terminal");
   });
-  test("configKey reads top-level keys only", () => {
-    expect(configKey("theme", config("ui:\n  theme: nord\n"))).toBeUndefined();
-    expect(configKey("theme", join(dir, "missing.yaml"))).toBeUndefined();
+  test("the setting lives next to aihub-code's other per-user files in ~/.aihub", () => {
+    expect(codeSettingsPath("/home/alex")).toBe(join("/home/alex", ".aihub", "aihub-code-settings.json"));
   });
 });
 

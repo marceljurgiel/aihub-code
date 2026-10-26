@@ -37,8 +37,10 @@ export function configPath(home: string = homedir()): string {
 }
 
 /** A top-level scalar of a config file, lower-cased; undefined when the file
- * or the key is missing (an indented key belongs to another section). */
-export function configKey(key: "accent" | "theme", path: string = configPath()): string | undefined {
+ * or the key is missing (an indented key belongs to another section). AIhub's
+ * own `theme:` is not read: AIhub always writes one, and aihub-code's theme is
+ * its own setting (codeTheme). */
+export function configKey(key: "accent", path: string = configPath()): string | undefined {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -55,6 +57,23 @@ export function configKey(key: "accent" | "theme", path: string = configPath()):
 export function accentFromConfig(path: string = configPath()): string | undefined {
   const name = configKey("accent", path) ?? "";
   return Object.hasOwn(ACCENTS, name) ? (ACCENTS as Record<string, string>)[name] : undefined;
+}
+
+/** aihub-code's own per-user settings, beside its other per-user file
+ * (~/.aihub/aihub-code-bridge.err.log); per-project state is in ~/.aihub/projects. */
+export function codeSettingsPath(home: string = homedir()): string {
+  return join(home, ".aihub", "aihub-code-settings.json");
+}
+
+/** The hub theme aihub-code's settings name, lower-cased; undefined when the
+ * file is missing or unreadable or names none (then the "terminal" theme). */
+export function codeTheme(path: string = codeSettingsPath()): string | undefined {
+  try {
+    const v = JSON.parse(readFileSync(path, "utf8"))?.theme;
+    return typeof v === "string" ? v.trim().toLowerCase() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Set the live accent from the user's config; the default when there is none.
