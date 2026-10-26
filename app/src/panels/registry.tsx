@@ -121,7 +121,7 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
           backend={s.backend}
           streamModel={streamModel}
           onChoose={(choice) =>
-            soon(c, choice.kind === "agent" ? `Switching to agent ${choice.agent.name} · ${choice.submode}` : "Switching to plain chat")
+            void c.setKind(choice.kind === "agent" ? { type: "agent", name: choice.agent.name, submode: choice.submode } : { type: "chat" })
           }
           onClose={() => close()}
         />
@@ -157,7 +157,7 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
       return (close) => <MissedPanel c={c} tasks={missedTasks(ctx.arg)} close={() => close()} />;
     case "history":
       return (close) => (
-        <HistoryModal model={s.modelName} onLoad={() => soon(c, "Continuing a saved conversation")} onClose={() => close()} />
+        <HistoryModal model={s.modelName} onLoad={(messages, startTime) => void c.loadHistory(messages, startTime)} onClose={() => close()} />
       );
     case "settings":
       return (close) => (

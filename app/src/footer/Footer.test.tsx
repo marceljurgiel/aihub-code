@@ -1047,3 +1047,66 @@ describe("footer clamp (maxHeight)", () => {
     expect(m.lines().length).toBe(6);
   });
 });
+
+describe("hub kinds (chat, AIhub agents)", () => {
+  const HUB_ANSWERS = {
+    "chat.start": { messages: [{ role: "system", content: "s" }] },
+    "agent.check": { ok: true, context: 2000, agent: { name: "reviewer", tools: [], permission: "ask", model: "" } },
+  };
+
+  test("the status line says chat · <model>, without the shift+tab hint; Shift+Tab does nothing", async () => {
+    m = await mount({ answers: HUB_ANSWERS });
+    await m.c.setKind({ type: "chat" });
+    await m.settle();
+    expect(text(m)).toContain("chat · m");
+    expect(text(m)).not.toContain("shift+tab mode");
+    expect(text(m)).not.toMatch(/build · m/);
+    await press(m, "tab", { shift: true });
+    expect(m.c.getState().kind).toEqual({ type: "chat" });
+    expect(m.bridge.to("code.mode")).toHaveLength(0);
+  });
+
+  test("an agent: agent <name> · <submode> · <model>; Shift+Tab toggles build and plan", async () => {
+    m = await mount({ answers: HUB_ANSWERS });
+    await m.c.setKind({ type: "agent", name: "reviewer", submode: "build" });
+    await m.settle();
+    expect(text(m)).toContain("agent reviewer · build · m");
+    await press(m, "tab", { shift: true });
+    expect(text(m)).toContain("agent reviewer · plan · m");
+    expect(m.bridge.to("code.mode")).toHaveLength(0);
+  });
+
+  test("a hub turn's prompt: 1 Yes and 3 No only; 2 does nothing; 3 answers {request_id, allow:false} with no message field", async () => {
+    m = await mount({ answers: HUB_ANSWERS, permissionQuietMs: 0 });
+    await m.c.setKind({ type: "chat" });
+    m.c.submit("write it");
+    await m.settle();
+    m.bridge.lastStream.emit("permission_request", { name: "write_file", arguments: { path: "notes.md", content: "x" } });
+    await m.settle();
+    const l = text(m);
+    expect(l).toContain("Allow write_file notes.md?");
+    expect(l).toContain("1. Yes");
+    expect(l).toContain("3. No");
+    expect(l).not.toContain("2.");
+    expect(l).not.toContain("tell the model");
+    await press(m, "2");
+    expect(perms(m)).toEqual([]);
+    await press(m, "3");
+    expect(text(m)).not.toContain("Tell the model what to do instead");
+    expect(perms(m)).toEqual([{ request_id: m.bridge.lastStream.id, allow: false }]);
+  });
+
+  test("the quiet guard still holds for hub prompts", async () => {
+    m = await mount({ answers: HUB_ANSWERS, permissionQuietMs: 500 });
+    await m.c.setKind({ type: "chat" });
+    m.c.submit("write it");
+    await m.settle();
+    m.bridge.lastStream.emit("permission_request", { name: "write_file", arguments: { path: "notes.md" } });
+    await m.settle();
+    await press(m, "1");
+    expect(perms(m)).toEqual([]);
+    m.clock.t += 600;
+    await press(m, "1");
+    expect(perms(m)).toEqual([{ request_id: m.bridge.lastStream.id, allow: true }]);
+  });
+});

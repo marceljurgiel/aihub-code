@@ -83,7 +83,8 @@ export function applyConfigAccent(path?: string): void {
 }
 
 export function modeColor(mode: string): string {
-  if (mode === "plan") return palette.yellow;
+  // "plan", or an AIhub agent's "agent <name> · plan".
+  if (mode === "plan" || mode.endsWith(" plan")) return palette.yellow;
   if (mode === "auto") return palette.red;
   return palette.accent;
 }

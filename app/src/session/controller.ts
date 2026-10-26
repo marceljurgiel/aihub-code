@@ -6,10 +6,13 @@
  * memory sink. `useController` is the thin hook over getState()/subscribe().
  *
  * Rules the footer relies on:
- *  - one `code.turn` at a time; submit while a turn runs queues the prompt and
- *    the next one goes out after `done`;
+ *  - one turn at a time: `code.turn` for the code agent, AIhub's `chat.turn`
+ *    under plain chat or an AIhub agent (the `kind`, see setKind / HubChat);
+ *    submit while a turn runs queues the prompt and the next one goes out
+ *    after `done`;
  *  - a permission answer carries the prompt's `permission_id`; a second
- *    request replaces the first, and an answer meant for the old one is dropped;
+ *    request replaces the first, and an answer meant for the old one is
+ *    dropped (a hub turn's prompt has no id: a plain yes or no);
  *  - after cancel every event of that turn is ignored but `done` (a prompt
  *    that still arrives is denied at once, so the engine never waits for it);
  *  - when the bridge dies the phase becomes "error" with the client's message
@@ -37,7 +40,9 @@ import {
   undoSummary,
 } from "../transcript/format";
 import { MarkdownStreamer } from "../transcript/markdown";
+import { exitLine } from "../replay";
 import { sanitize, stripCR } from "../width";
+import { agentNote, HubChat, type AgentInfo, type ChatMessage, type HubKind } from "./hubChat";
 
 /** What the controller needs of BridgeClient (tests pass a mock). */
 export interface Bridge {
@@ -57,6 +62,27 @@ export type Backend = "ollama" | "api";
 
 export type Phase = "starting" | "idle" | "running" | "permission" | "picker" | "error";
 
+/** Who the prompt talks to: the code agent (aihub-code's own session), plain
+ *  chat, or one of AIhub's agent profiles (both run by AIhub's chat.turn). */
+export type Kind = { type: "code" } | HubKind;
+
+const CODE: Kind = { type: "code" };
+
+const sameKind = (a: Kind, b: Kind): boolean =>
+  a.type === b.type && (a.type !== "agent" || (b.type === "agent" && a.name === b.name && a.submode === b.submode));
+
+/** The status line's first word: the code agent's mode, `chat`, or
+ *  `agent <name> · <submode>`. */
+export function kindLabel(kind: Kind, mode: Mode): string {
+  if (kind.type === "chat") return "chat";
+  if (kind.type === "agent") return `agent ${kind.name} · ${kind.submode}`;
+  return mode;
+}
+
+/** The divider written when a conversation of that kind begins. */
+const kindHeader = (kind: Kind, mode: Mode, model: string): string =>
+  kind.type === "code" ? `code · ${mode} · ${model}` : `${kindLabel(kind, mode)} · ${model}`;
+
 export interface SuggestedRule {
   tool: string;
   pattern: string | null;
@@ -75,6 +101,9 @@ export interface PermissionState {
   suggestedRule: SuggestedRule | null;
   mode: string;
   reason: string;
+  /** From an AIhub chat/agent turn: a plain yes or no (its protocol takes no
+   *  message and no rule). */
+  hub: boolean;
 }
 
 export interface PickerItem {
@@ -117,7 +146,9 @@ export type PanelId =
 
 export interface ControllerState {
   phase: Phase;
+  /** The code agent's mode (kept while another kind is in front). */
   mode: Mode;
+  kind: Kind;
   model: string;
   /** How the model is reached, and the name the engine streams it under. */
   backend: Backend;
@@ -185,12 +216,26 @@ interface Turn {
   handle: StreamHandle | null;
   cancelled: boolean;
   streamer: MarkdownStreamer;
+  /** The AIhub conversation a chat.turn belongs to; null for the code agent. */
+  hub: HubChat | null;
+  /** Text was streamed since the last round (a round's text is then on screen). */
+  streamed: boolean;
+}
+
+/** agent.check's answer (bridge _h_agent_check). */
+interface AgentCheck {
+  ok?: boolean;
+  reason?: string;
+  context?: number;
+  context_note?: string;
+  agent?: AgentInfo;
 }
 
 export class Controller {
   private state: ControllerState = {
     phase: "starting",
     mode: "build",
+    kind: CODE,
     model: "",
     backend: "ollama",
     streamModel: "",
@@ -225,6 +270,19 @@ export class Controller {
   // Where Esc in a command's picker goes back to, when there is no session to
   // go back to (after a failed start: "error"). Null for start-up pickers.
   private pickerBack: Phase | null = null;
+  // The AIhub conversation in front (chat / agent kinds), or null.
+  private hub: HubChat | null = null;
+  // The code session as it was when another kind came in front.
+  private codeSnap: { model: string; backend: Backend; streamModel: string; ctx: { used: number; limit: number } } | null = null;
+  // Plain chat's context while an agent enlarged it (AIhub restores it).
+  private chatCtx: number | null = null;
+  // Code sessions whose resume line is already in the transcript.
+  private resumeLineShown = new Set<string>();
+  // A kind switch (or a new hub conversation) is under way.
+  private switching = false;
+  // From AIhub's settings, for chat.turn.
+  private toolsEnabled = true;
+  private defaultContext = 2048;
 
   constructor(private readonly o: ControllerOptions) {
     // A bridge that dies between turns is said at once, not at the next Enter.
@@ -295,6 +353,8 @@ export class Controller {
       if (this.o.bridge.deadError()) return this.failStart(e);
       this.note(`could not read AIhub's settings: ${errText(e)}`);
     }
+    this.toolsEnabled = config.tools_enabled !== false;
+    this.defaultContext = Number(config.default_context_length) || 2048;
     const cwd = this.o.cwd ?? process.cwd();
     try {
       if (typeof args.resume === "string") return await this.resume(args.resume);
@@ -338,6 +398,10 @@ export class Controller {
     if (id === null && back !== null) {
       this.set({ picker: null, phase: back });
       return;
+    }
+    if (picker.kind === "model" && id !== null && live && this.state.kind.type !== "code") {
+      this.set({ picker: null, phase: "idle" });
+      return this.useModel({ name: id, backend: "ollama" });
     }
     await this.replaceSession(async () => {
       if (picker.kind === "model") {
@@ -521,7 +585,7 @@ export class Controller {
   }
 
   private drainQueue(): void {
-    if (this.exited || this.turn || this.modeBusy || this.undoBusy || this.listing) return;
+    if (this.exited || this.turn || this.modeBusy || this.undoBusy || this.listing || this.switching) return;
     if (this.state.confirm || this.state.picker || this.state.phase === "starting") return;
     // A turn under an open panel would squeeze into the row above it, and a
     // permission prompt would unmount the window: the queue waits for closePanel.
@@ -533,21 +597,31 @@ export class Controller {
     this.sendTurn(next);
   }
 
+  /** A prompt goes to the kind in front: the code session (`code.turn`) or
+   *  the AIhub conversation (`chat.turn`). */
   private sendTurn(text: string): void {
     this.write([[], ...fmtUser(text, this.o.width())]);
+    const hub = this.state.kind.type === "code" ? null : this.hub;
+    if (hub) {
+      hub.temperature = this.state.temperature;
+      hub.contextLength = this.state.ctx.limit > 0 ? this.state.ctx.limit : this.defaultContext;
+      hub.toolsEnabled = this.toolsEnabled;
+      this.startStream("chat.turn", hub.params(text, []), "thinking…", hub);
+      return;
+    }
     this.turnsSent++;
     this.startStream("code.turn", { text }, "thinking…");
   }
 
   /** A streaming call the engine runs on the session (a turn, a compaction):
    *  one at a time, cancellable, its events drawn by onEvent. */
-  private startStream(method: string, params: Record<string, unknown>, label: string): void {
-    const turn: Turn = { handle: null, cancelled: false, streamer: new MarkdownStreamer(this.o.width()) };
+  private startStream(method: string, params: Record<string, unknown>, label: string, hub: HubChat | null = null): void {
+    const turn: Turn = { handle: null, cancelled: false, streamer: new MarkdownStreamer(this.o.width()), hub, streamed: false };
     this.turn = turn;
     this.set({ phase: "running", activity: { label, since: this.now() } });
     turn.handle = this.o.bridge.stream(method, params, (event, data) => this.onEvent(turn, event, data));
     turn.handle.done.then(
-      () => this.onDone(turn),
+      (data) => this.onDone(turn, data),
       (err) => this.onFail(turn, err),
     );
   }
@@ -555,8 +629,7 @@ export class Controller {
   // ── turn events ────────────────────────────────────────────────────────────
 
   private onEvent(turn: Turn, event: string, data: any): void {
-    if (this.turn !== turn) return;
-    if (turn.cancelled) {
+    if (this.turn !== turn || turn.cancelled) {
       // The engine may still be waiting on a prompt that slipped past the
       // cancel: refuse it, so it never blocks the turn's end.
       if (event === "permission_request") this.denyUnseen(turn, data);
@@ -565,6 +638,7 @@ export class Controller {
     const width = this.o.width();
     switch (event) {
       case "text":
+        turn.streamed = true;
         this.write(turn.streamer.feed(String(data.text ?? "")));
         this.activity("writing…");
         break;
@@ -578,11 +652,17 @@ export class Controller {
         this.activity(activityFor(ev));
         break;
       }
-      case "tool_result":
+      case "tool_result": {
         this.flush(turn);
-        this.write(fmtToolResult(data as ToolResultEvent, width));
+        const ev = data as ToolResultEvent;
+        let rows = fmtToolResult(ev, width);
+        // An edit's outcome is the code agent's code_diff, which AIhub's turns
+        // never send: say its result as any other tool's.
+        if (turn.hub && rows.length === 0) rows = fmtToolResult({ ...ev, name: "" }, width);
+        this.write(rows);
         this.activity("thinking…");
         break;
+      }
       case "code_diff":
         this.flush(turn);
         this.write(fmtDiff(data as DiffEvent, width));
@@ -620,14 +700,51 @@ export class Controller {
             permissionId: typeof data.permission_id === "number" ? data.permission_id : null,
             name: String(data.name ?? ""),
             arguments: data.arguments && typeof data.arguments === "object" ? data.arguments : {},
-            diff: data.diff ?? null,
-            suggestedRule: data.suggested_rule ?? null,
+            diff: turn.hub ? hubDiff(String(data.name ?? ""), data.arguments) : (data.diff ?? null),
+            suggestedRule: turn.hub ? null : (data.suggested_rule ?? null),
             mode: String(data.mode ?? ""),
             reason: String(data.reason ?? ""),
+            hub: turn.hub !== null,
           },
         });
         break;
-      // usage, round, final, knowledge, ...: nothing to show.
+      default:
+        if (turn.hub) this.onHubEvent(turn, event, data);
+      // code turns: usage, round, final, ...: nothing to show.
+    }
+  }
+
+  /** What only AIhub's chat.turn sends (ChatScreen 527–600). */
+  private onHubEvent(turn: Turn, event: string, data: any): void {
+    switch (event) {
+      case "round": {
+        // The round's reply is complete. AIhub logs its text here; ours was
+        // streamed already, unless the round sent none (then it is written now).
+        const text = String(data.text ?? "");
+        if (!turn.streamed && text.trim()) this.write(turn.streamer.feed(text));
+        this.flush(turn);
+        turn.streamed = false;
+        break;
+      }
+      case "usage": {
+        const used = Number(data.prompt_tokens) || this.state.ctx.used;
+        this.set({ ctx: { ...this.state.ctx, used } });
+        break;
+      }
+      case "knowledge": {
+        // Which documents the answer can draw on, or why it can't.
+        this.flush(turn);
+        const kb = (Array.isArray(data?.bases) ? data.bases : []).join(", ");
+        const sources: string[] = Array.isArray(data?.sources) ? data.sources.map(String) : [];
+        if (data?.error) this.error(`Knowledge (${kb}): ${data.error}`);
+        else if (data?.hits)
+          this.note(
+            `\u00b6 ${kb}: ${data.hits} excerpt${data.hits === 1 ? "" : "s"} from ${sources.slice(0, 3).join(", ")}` +
+              (sources.length > 3 ? "\u2026" : ""),
+          );
+        else this.note(`\u00b6 ${kb}: nothing relevant found.`);
+        break;
+      }
     }
   }
 
@@ -648,12 +765,24 @@ export class Controller {
     this.o.bridge.permission(turn.handle!.id, false, extra);
   }
 
-  private onDone(turn: Turn): void {
+  private onDone(turn: Turn, data: any): void {
     if (this.turn !== turn) return;
     if (!turn.cancelled) this.flush(turn);
     this.turn = null;
+    if (turn.hub) this.hubTurnDone(turn.hub, data, turn.cancelled);
     this.set({ phase: "idle", activity: null, permission: null });
     this.drainQueue();
+  }
+
+  /** The engine's messages become the conversation (an interrupted turn's
+   *  too: the prompt and the partial reply); a finished turn is saved to
+   *  AIhub's history (autosave), as ChatScreen does after each reply. */
+  private hubTurnDone(hub: HubChat, data: any, cancelled: boolean): void {
+    hub.accept(data?.messages);
+    if (cancelled || hub !== this.hub) return;
+    hub.finalize(true).catch((e) => {
+      if (!this.exited) this.error(`Saving the chat failed: ${errText(e)}`);
+    });
   }
 
   private onFail(turn: Turn, err: unknown): void {
@@ -679,6 +808,14 @@ export class Controller {
     const p = this.state.permission;
     if (!p || !this.turn) return;
     if (permissionId !== p.permissionId) return;
+    if (p.hub) {
+      // AIhub's chat.permission is {request_id, allow}: nothing to remember, no message.
+      if (choice === "always") return;
+      const allow = choice === "yes";
+      this.o.bridge.permission(p.requestId, allow);
+      this.set({ phase: "running", permission: null, activity: { label: allow ? `running ${p.name}…` : "thinking…", since: this.now() } });
+      return;
+    }
     const extra: Record<string, unknown> = {};
     if (p.permissionId !== null) extra.permission_id = p.permissionId;
     let allow = true;
@@ -715,7 +852,17 @@ export class Controller {
 
   // ── mode ───────────────────────────────────────────────────────────────────
 
+  /** Shift+Tab: the code agent's modes; an AIhub agent's build/plan; nothing in chat. */
   cycleMode(): void {
+    const k = this.state.kind;
+    if (k.type === "chat") return;
+    if (k.type === "agent") {
+      const next: Kind = { ...k, submode: k.submode === "plan" ? "build" : "plan" };
+      if (this.hub) this.hub.kind = next;
+      this.set({ kind: next });
+      this.note(kindLabel(next, this.state.mode));
+      return;
+    }
     this.setMode(MODES[(MODES.indexOf(this.state.mode) + 1) % MODES.length]!);
   }
 
@@ -822,10 +969,19 @@ export class Controller {
     return false;
   }
 
-  /** For commands that change or replace the session: only between turns. */
-  private canSwitch(): boolean {
+  /** For the code agent's own commands: under another kind they say so
+   *  instead of acting on the code session behind it. */
+  requireCode(cmd: string): boolean {
+    if (this.state.kind.type === "code") return true;
+    this.note(`/${cmd} is for the code agent \u2014 /agent code switches back`);
+    return false;
+  }
+
+  /** For commands that change or replace the session: only between turns
+   *  (`allowTurn`: a kind switch interrupts the turn itself). */
+  private canSwitch(allowTurn = false): boolean {
     const { phase, confirm, picker } = this.state;
-    if (phase === "starting") {
+    if (phase === "starting" || this.switching) {
       this.note("wait until the session is ready");
       return false;
     }
@@ -841,7 +997,7 @@ export class Controller {
       this.note("answer the undo question first");
       return false;
     }
-    if (this.turn || this.modeBusy || this.undoBusy || phase === "permission") {
+    if (this.modeBusy || this.undoBusy || (!allowTurn && (this.turn || phase === "permission"))) {
       this.note("wait for the current turn to finish");
       return false;
     }
@@ -849,8 +1005,8 @@ export class Controller {
   }
 
   /** `/mode`: the mode in effect, or a change to it. */
-  mode(arg: string): void {
-    if (!this.requireSession()) return;
+  mode(arg: string, cmd = "mode"): void {
+    if (!this.requireSession() || !this.requireCode(cmd)) return;
     const want = arg.trim().toLowerCase();
     if (!want) {
       this.note(`mode: ${this.state.mode} (change it with /mode plan, /mode build or /mode auto)`);
@@ -865,7 +1021,7 @@ export class Controller {
 
   /** `/todos`: the model's list, as the last `todo_write` left it. */
   async showTodos(): Promise<void> {
-    if (!this.requireSession()) return;
+    if (!this.requireSession() || !this.requireCode("todos")) return;
     const { todos = [] } = await this.o.bridge.request<{ todos?: TodoItem[] }>("code.todos", {});
     this.set({ todos });
     this.write(fmtTodos(todos, this.o.width()));
@@ -873,14 +1029,14 @@ export class Controller {
 
   /** `/compact`. */
   compact(): void {
-    if (!this.requireSession() || !this.canSwitch()) return;
+    if (!this.requireSession() || !this.requireCode("compact") || !this.canSwitch()) return;
     this.startStream("code.compact", {}, "compacting\u2026");
   }
 
   /** `/undo`: show what the last turn changed, then ask. `force` goes over
    *  files that changed after the turn. */
   async undo(force: boolean): Promise<void> {
-    if (!this.requireSession() || !this.canSwitch()) return;
+    if (!this.requireSession() || !this.requireCode("undo") || !this.canSwitch()) return;
     const width = this.o.width();
     this.undoBusy = true;
     try {
@@ -931,9 +1087,15 @@ export class Controller {
     else this.error(msg);
   }
 
-  /** `/clear`: a new session on the same model, mode and opt-ins. */
+  /** `/clear`: a new session on the same model, mode and opt-ins; under
+   *  chat or an agent, a new AIhub conversation (ChatScreen doNewChat). */
   async clear(): Promise<void> {
     if (!this.requireSession() || !this.canSwitch()) return;
+    const k = this.state.kind;
+    if (k.type !== "code") {
+      await this.switchWith(() => this.openHub(k, this.current(), { divider: "new chat" }));
+      return;
+    }
     await this.replaceSession(() => this.startSession(this.state.model, false, { mode: this.state.mode, divider: "clear" }));
   }
 
@@ -941,6 +1103,7 @@ export class Controller {
    *  resumable). Without a name: a picker of installed and cloud models. */
   async switchModel(name: string): Promise<void> {
     if (!this.canSwitch()) return;
+    if (name && this.state.kind.type !== "code") return this.useModel({ name, backend: "ollama" });
     if (name) {
       await this.replaceSession(() => this.startSession(name, true, { mode: this.state.mode, divider: "model" }));
       return;
@@ -957,10 +1120,21 @@ export class Controller {
   }
 
   /** A model picked in the models window: a new code session on it, with its
-   *  backend and stream name (the old session stays resumable). Chat and agent
-   *  kinds switch in place instead (Task 5). */
+   *  backend and stream name (the old session stays resumable). Under chat or
+   *  an agent, AIhub's way (ChatScreen doPickModel): the conversation is saved
+   *  and a new plain chat starts on the new model. */
   async useModel(choice: { name: string; backend: Backend; streamModel?: string }): Promise<void> {
     if (!this.canSwitch()) return;
+    if (this.state.kind.type !== "code") {
+      const target = { model: choice.name, backend: choice.backend, streamModel: choice.streamModel || choice.name };
+      await this.switchWith(async () => {
+        const old = this.hub;
+        if (old?.hasUserMessages()) await old.finalize(true).catch((e) => this.error(`Saving the chat failed: ${errText(e)}`));
+        this.chatCtx = null;
+        await this.openHub({ type: "chat" }, target);
+      });
+      return;
+    }
     await this.replaceSession(() =>
       this.startSession(choice.name, false, {
         mode: this.state.mode,
@@ -1017,8 +1191,8 @@ export class Controller {
   }
 
   /** `/sessions`, `/resume`: pick one of this folder's earlier sessions. */
-  async openSessions(): Promise<void> {
-    if (!this.canSwitch()) return;
+  async openSessions(cmd = "sessions"): Promise<void> {
+    if (!this.requireCode(cmd) || !this.canSwitch()) return;
     this.listing = true;
     try {
       const { sessions = [] } = await this.o.bridge.request<{ sessions?: any[] }>("code.sessions", { cwd: this.o.cwd ?? process.cwd() });
@@ -1040,7 +1214,7 @@ export class Controller {
 
   /** `/resume <id>`. */
   async resumeSession(id: string): Promise<void> {
-    if (!this.canSwitch()) return;
+    if (!this.requireCode("resume") || !this.canSwitch()) return;
     if (id === this.state.sessionId) {
       this.note("that's the current session");
       return;
@@ -1052,7 +1226,181 @@ export class Controller {
    *  resumed). Empty otherwise. The app prints the resume line from this once
    *  the terminal is restored. */
   resumableSessionId(): string {
-    return this.state.sessionId && (this.turnsSent > 0 || this.resumed) ? this.state.sessionId : "";
+    // Under chat or an agent the code session's line is in the transcript
+    // already (written when it went behind); it is written once.
+    if (this.state.kind.type !== "code") return "";
+    const id = this.state.sessionId && (this.turnsSent > 0 || this.resumed) ? this.state.sessionId : "";
+    return id && !this.resumeLineShown.has(id) ? id : "";
+  }
+
+  // ── kinds: the code agent, plain chat, AIhub agents ────────────────────────
+
+  /** `/agent code|chat|<profile>`, the agents window. A running turn is
+   *  interrupted first (its queued prompts are dropped, as on Esc); an agent
+   *  is checked (agent.check) before anything changes. Leaving the code agent
+   *  writes its resume line; chat and an agent share one AIhub conversation
+   *  (AIhub's mode switch); back to code, the code session goes on (a new one
+   *  if the model changed meanwhile). */
+  async setKind(k: Kind): Promise<void> {
+    if (this.exited || !this.requireSession()) return;
+    const cur = this.state.kind;
+    if (sameKind(cur, k)) {
+      this.note(`already ${k.type === "chat" ? "in plain chat" : k.type === "code" ? "with the code agent" : `with agent ${k.name} \u00b7 ${k.submode}`}`);
+      return;
+    }
+    if (!this.canSwitch(true)) return;
+    const turn = this.turn;
+    await this.switchWith(async () => {
+      if (turn) {
+        this.cancel(); // writes "interrupted" and drops what was queued behind it
+        await turn.handle?.done.then(noop, noop);
+        if (this.o.bridge.deadError()) return; // onFail has said it
+        this.set({ phase: "starting" });
+      } else {
+        this.dropQueued();
+      }
+      let check: AgentCheck = {};
+      if (k.type === "agent") {
+        const { model, streamModel, backend } = this.state;
+        check = (await this.o.bridge.request<AgentCheck>("agent.check", { model: streamModel || model, backend, agent: k.name })) ?? {};
+        if (!check.ok) {
+          this.error(`Agent unavailable: ${check.reason ?? "unknown reason"}`);
+          return;
+        }
+      }
+      if (cur.type === "code") this.leaveCode();
+      if (k.type === "code") await this.enterCode();
+      else if (cur.type !== "code" && this.hub) await this.changeHubKind(k, check);
+      else await this.openHub(k, this.current(), { check });
+    });
+  }
+
+  /** A conversation from AIhub's history (the history window): it continues
+   *  under chat (or under the agent in front, as AIhub keeps its mode). */
+  async loadHistory(messages: ChatMessage[], startTime?: string): Promise<void> {
+    if (this.exited || !this.requireSession() || !this.canSwitch()) return;
+    await this.switchWith(async () => {
+      const cur = this.state.kind;
+      const k: HubKind = cur.type === "code" ? { type: "chat" } : cur;
+      if (cur.type === "code") this.leaveCode();
+      const m = this.current();
+      const hub = new HubChat(this.o.bridge, m);
+      hub.load(messages, startTime);
+      hub.kind = k;
+      const limit = cur.type === "code" ? await this.chatContext(m) : this.state.ctx.limit;
+      this.hub = hub;
+      this.set({ kind: k, ctx: { used: 0, limit } });
+      this.write(fmtDivider(kindHeader(k, this.state.mode, m.model), this.o.width()));
+      this.o.onResume?.(messages);
+      const n = messages.filter((x) => x.role === "user" || x.role === "assistant").length;
+      this.note(`Resumed session \u2014 ${n} messages.`);
+    });
+  }
+
+  private current(): { model: string; backend: Backend; streamModel: string } {
+    const { model, backend, streamModel } = this.state;
+    return { model, backend, streamModel: streamModel || model };
+  }
+
+  /** A switch: "starting" meanwhile (prompts typed queue), a failure said and
+   *  the kind left as it was, the queue served afterwards. */
+  private async switchWith(fn: () => Promise<void>): Promise<void> {
+    this.switching = true;
+    if (!this.turn) this.set({ phase: "starting" });
+    try {
+      await fn();
+    } catch (e) {
+      const dead = this.o.bridge.deadError();
+      if (dead) this.bridgeGone(dead);
+      else this.error(errText(e));
+    } finally {
+      this.switching = false;
+      if (this.state.phase === "starting") this.set({ phase: "idle" });
+      this.drainQueue();
+    }
+  }
+
+  private dropQueued(): void {
+    const n = this.state.queue.length;
+    if (n === 0) return;
+    this.note(`dropped ${n} queued prompt${n === 1 ? "" : "s"}`);
+    this.set({ queue: [] });
+  }
+
+  /** The code session goes behind: its resume line (once), and what to come back to. */
+  private leaveCode(): void {
+    const id = this.resumableSessionId();
+    if (id) {
+      this.resumeLineShown.add(id);
+      this.note(exitLine(id)!);
+    }
+    const { model, backend, streamModel, ctx } = this.state;
+    this.codeSnap = { model, backend, streamModel, ctx };
+  }
+
+  private async enterCode(): Promise<void> {
+    const snap = this.codeSnap;
+    const m = this.current();
+    if (snap && snap.model === m.model && snap.backend === m.backend && (snap.streamModel || snap.model) === m.streamModel) {
+      this.set({ kind: CODE, ctx: snap.ctx });
+      this.write(fmtDivider(kindHeader(CODE, this.state.mode, m.model), this.o.width()));
+    } else {
+      await this.startSession(m.model, false, { mode: this.state.mode, divider: "model", backend: m.backend, streamModel: m.streamModel });
+      this.set({ kind: CODE });
+    }
+    this.hub = null;
+    this.codeSnap = null;
+    this.chatCtx = null;
+  }
+
+  /** A new AIhub conversation (chat.start) of kind `k` on model `m`. */
+  private async openHub(
+    k: HubKind,
+    m: { model: string; backend: Backend; streamModel: string },
+    o: { check?: AgentCheck; divider?: string } = {},
+  ): Promise<void> {
+    const hub = new HubChat(this.o.bridge, m);
+    await hub.start();
+    hub.kind = k;
+    let limit = this.state.ctx.limit;
+    if (k.type === "chat") limit = await this.chatContext(m);
+    else if (Number(o.check?.context) > 0) limit = Number(o.check!.context);
+    this.hub = hub;
+    this.set({ kind: k, model: m.model, backend: m.backend, streamModel: m.streamModel, ctx: { used: 0, limit } });
+    this.write(fmtDivider(o.divider ?? kindHeader(k, this.state.mode, m.model), this.o.width()));
+    // On entering an agent (not on /clear under it): what it can do.
+    if (k.type === "agent" && o.check) this.note(agentNote(o.check.agent ?? { name: k.name }, k.submode, o.check, m.model, limit));
+  }
+
+  /** Chat ↔ agent (or another agent) inside the same AIhub conversation. */
+  private async changeHubKind(k: HubKind, check: AgentCheck): Promise<void> {
+    const cur = this.state.kind;
+    let limit = this.state.ctx.limit;
+    if (k.type === "agent") {
+      if (cur.type === "chat") this.chatCtx = limit;
+      if (Number(check.context) > 0) limit = Number(check.context);
+    } else {
+      limit = this.chatCtx ?? (await this.chatContext(this.current()));
+      this.chatCtx = null;
+    }
+    this.hub!.kind = k;
+    this.set({ kind: k, ctx: { ...this.state.ctx, limit } });
+    this.write(fmtDivider(kindHeader(k, this.state.mode, this.state.model), this.o.width()));
+    if (k.type === "agent") this.note(agentNote(check.agent ?? { name: k.name }, k.submode, check, this.state.model, limit));
+    else this.note("Back to plain chat.");
+  }
+
+  /** Plain chat's context: what fits this model (AIhub sizes it so on
+   *  picking a model); otherwise the size in use, or AIhub's default. */
+  private async chatContext(m: { model: string; backend: Backend }): Promise<number> {
+    const fallback = this.state.ctx.limit > 0 ? this.state.ctx.limit : this.defaultContext;
+    if (m.backend !== "ollama") return fallback;
+    try {
+      const d = await this.o.bridge.request<{ context?: number }>("hardware.recommend_context", { model: m.model });
+      return Number(d?.context) > 0 ? Number(d.context) : fallback;
+    } catch {
+      return fallback;
+    }
   }
 
   /** Leave. A running turn is interrupted first, and its end awaited for a
@@ -1085,6 +1433,27 @@ function normalizePlan(p: Partial<UndoPlan> | null | undefined): UndoPlan {
     shell_not_reverted: list(p?.shell_not_reverted),
     skipped: list(p?.skipped),
     applied: p?.applied === true,
+  };
+}
+
+/** What an AIhub turn's edit would change, as a diff for the prompt: AIhub
+ *  shows the whole change before it is approved, and its permission_request
+ *  carries only the tool's arguments (write_file {path, content}, edit_file
+ *  {path, old, new}). */
+function hubDiff(name: string, args: unknown): DiffEvent | null {
+  if (name !== "write_file" && name !== "edit_file") return null;
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const rows = (v: unknown, sign: string) => (str(v) === "" ? [] : stripCR(str(v)).split("\n").map((l) => sign + sanitize(l)));
+  const path = sanitize(str(a.path)).replace(/\n/g, " ");
+  const removed = name === "edit_file" ? rows(a.old, "-") : [];
+  const added = rows(name === "edit_file" ? a.new : a.content, "+");
+  return {
+    path,
+    text: [`--- a/${path}`, `+++ b/${path}`, ...removed, ...added].join("\n"),
+    added: added.length,
+    removed: removed.length,
+    created: false,
   };
 }
 

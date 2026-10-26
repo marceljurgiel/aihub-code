@@ -125,7 +125,7 @@ describe("routing", () => {
   test("the table: names from the spec, each with help, hints for the footer", () => {
     expect(COMMANDS.map((c) => c.name)).toEqual([
       "help", "mode", "plan", "model", "undo", "compact", "todos", "rules", "sessions", "resume", "clear", "new", "context",
-      "models", "hardware", "agents", "skills", "mcp", "knowledge", "schedule", "history", "memory", "settings", "theme", "temp",
+      "models", "hardware", "agent", "agents", "skills", "mcp", "knowledge", "schedule", "history", "memory", "settings", "theme", "temp",
       "exit",
     ]);
     for (const c of COMMANDS) expect(c.help.length).toBeGreaterThan(5);

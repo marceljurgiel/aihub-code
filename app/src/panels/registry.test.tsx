@@ -274,3 +274,63 @@ describe("a resize while a panel is open (Review Focus 2)", () => {
     expect(setup.renderer.footerHeight).toBe(5);
   });
 });
+
+describe("kinds from the windows (Task 5)", () => {
+  const AGENTS = {
+    agents: [
+      { name: "reviewer", description: "Reviews code", prompt: "", tools: ["read_file"], permission: "ask", model: "", context: 0, builtin: true, path: "" },
+    ],
+    dir: "/x",
+  };
+
+  test("agents: Enter on Plain chat switches to chat; p on a profile starts it in plan", async () => {
+    m = await mountPanels({
+      answers: {
+        "agents.list": AGENTS,
+        "chat.start": { messages: [{ role: "system", content: "s" }] },
+        "agent.check": { ok: true, context: 4096, agent: AGENTS.agents[0] },
+      },
+    });
+    const mm = m;
+    mm.c.submit("/agent");
+    await until(() => mm.frame().includes("reviewer"), mm.settle);
+    mm.setup.mockInput.pressEnter();
+    await until(() => mm.c.getState().kind.type === "chat", mm.settle);
+    expect(mm.c.getState().panel).toBeNull();
+    expect(mm.bridge.to("chat.start")).toHaveLength(1);
+
+    mm.c.submit("/agents");
+    await until(() => mm.frame().includes("reviewer"), mm.settle);
+    mm.setup.mockInput.pressArrow("down");
+    await mm.settle();
+    mm.setup.mockInput.pressKey("p");
+    await until(() => mm.c.getState().kind.type === "agent", mm.settle);
+    expect(mm.c.getState().kind).toEqual({ type: "agent", name: "reviewer", submode: "plan" });
+    expect(mm.bridge.to("agent.check")[0]!.params).toMatchObject({ agent: "reviewer" });
+  });
+
+  test("history: Enter loads the conversation into chat; the next prompt continues it", async () => {
+    const saved = [
+      { role: "system", content: "s" },
+      { role: "user", content: "old question" },
+      { role: "assistant", content: "old answer" },
+    ];
+    m = await mountPanels({
+      answers: {
+        "history.list": { sessions: [{ filename: "a.json", start_time: "2026-10-01T10:00:00", message_count: 2 }] },
+        "history.load": { messages: saved, start_time: "2026-10-01T10:00:00" },
+      },
+    });
+    const mm = m;
+    mm.c.submit("/history");
+    await until(() => mm.frame().includes("2026-10-01 10:00"), mm.settle);
+    mm.setup.mockInput.pressEnter();
+    await until(() => mm.c.getState().kind.type === "chat", mm.settle);
+    expect(noted(mm)).toContain("Resumed session — 2 messages.");
+    await until(() => mm.c.getState().panel === null && mm.c.getState().phase === "idle", mm.settle);
+    mm.c.submit("and now?");
+    await mm.settle();
+    expect(mm.bridge.lastStream.method).toBe("chat.turn");
+    expect(mm.bridge.lastStream.params.messages).toEqual([...saved, { role: "user", content: "and now?" }]);
+  });
+});

@@ -18,7 +18,7 @@
 import type { TextareaRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Controller } from "../session/controller";
+import { kindLabel, type Controller } from "../session/controller";
 import { useController } from "../session/useController";
 import { sanitize } from "../width";
 import { PanelHost } from "../panels/PanelHost";
@@ -28,7 +28,7 @@ import { PermissionPrompt, permissionLayout } from "./PermissionPrompt";
 import { Picker, pickerInnerRows } from "./Picker";
 import { MAX_INPUT_ROWS, PromptBox } from "./PromptBox";
 import { SlashSuggest, MAX_SUGGESTIONS, slashMatches, type SlashCommand } from "./SlashSuggest";
-import { StatusLine, type StatusInput } from "./StatusLine";
+import { CHAT_HINTS, StatusLine, type StatusInput } from "./StatusLine";
 
 export interface FooterProps {
   controller: Controller;
@@ -310,7 +310,9 @@ export function Footer(props: FooterProps) {
 
   const hint = armed && prompting ? { text: "Press Ctrl+C again to exit", warn: true } : paneled ? { text: HINTS.panel } : asking ? { text: noting ? HINTS.note : HINTS.permission } : picking ? { text: HINTS.picker } : confirming ? { text: HINTS.confirm } : null;
   const status: StatusInput = {
-    mode: st.mode,
+    mode: kindLabel(st.kind, st.mode),
+    // Shift+Tab does nothing in plain chat: no hint for it there.
+    hints: st.kind.type === "chat" ? CHAT_HINTS : undefined,
     model: sanitize(st.model),
     ctx: st.ctx,
     queued: st.queue.length,

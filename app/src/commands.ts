@@ -43,19 +43,20 @@ function temp(c: Controller, arg: string): Promise<void> | void {
 export const COMMANDS: Command[] = [
   { name: "help", args: "[keys]", help: "Show the commands and keys", run: panelOr("help", (c) => help(c)) },
   { name: "mode", args: "[plan|build|auto]", help: "Show or change the mode", run: (c, arg) => c.mode(arg) },
-  { name: "plan", help: "Switch to plan mode (no edits)", run: (c) => c.mode("plan") },
+  { name: "plan", help: "Switch to plan mode (no edits)", run: (c) => c.mode("plan", "plan") },
   { name: "model", args: "[name]", help: "Choose a model (starts a new session)", run: (c, arg) => c.switchModel(arg.trim()) },
   { name: "undo", args: "[force]", help: "Undo the last turn's file changes", run: (c, arg) => undo(c, arg) },
   { name: "compact", help: "Summarize the conversation to free context", run: (c) => c.compact() },
   { name: "todos", help: "Show the model's todo list", run: (c) => c.showTodos() },
   { name: "rules", args: "[remove N]", help: "List permission rules, or remove one", run: (c, arg) => rules(c, arg) },
   { name: "sessions", help: "Pick an earlier session of this folder", run: (c) => c.openSessions() },
-  { name: "resume", args: "[id]", help: "Resume an earlier session", run: (c, arg) => (arg.trim() ? c.resumeSession(arg.trim()) : c.openSessions()) },
+  { name: "resume", args: "[id]", help: "Resume an earlier session", run: (c, arg) => (arg.trim() ? c.resumeSession(arg.trim()) : c.openSessions("resume")) },
   { name: "clear", help: "New session on the same model and mode", run: (c) => c.clear() },
   { name: "new", help: "Same as /clear", run: (c) => c.clear() },
   { name: "context", help: "Show how much context is used", run: (c) => context(c) },
   { name: "models", help: "Models: installed, catalog, downloads, context", run: panel("models") },
   { name: "hardware", help: "What this machine and the Ollama server have", run: panel("hardware") },
+  { name: "agent", args: "[code|chat|<name>]", help: "Talk to the code agent, plain chat or an AIhub agent", run: (c, arg) => agent(c, arg) },
   { name: "agents", help: "AIhub's agent profiles", run: panel("agents") },
   { name: "skills", help: "Browse, create and install skills", run: panel("skills") },
   { name: "mcp", help: "Connections: Google, GitHub and other services", run: panel("mcp") },
@@ -100,6 +101,24 @@ function help(c: Controller): void {
   c.write([[], ...lines]);
 }
 
+// ── /agent ────────────────────────────────────────────────────────────────────
+
+/** `/agent` picks in the agents window (it has no separate manage mode, so
+ *  /agents opens the same); `/agent code|chat|<profile> [plan|build]` switches. */
+function agent(c: Controller, arg: string): Promise<void> | void {
+  const [name = "", sub = "", ...rest] = arg.trim().split(/\s+/).filter(Boolean);
+  if (!name) return void c.openPanel("agents");
+  const submode = sub.toLowerCase();
+  if (rest.length || (submode && submode !== "plan" && submode !== "build")) return c.note("usage: /agent, /agent code, /agent chat or /agent <profile> [plan]");
+  const lower = name.toLowerCase();
+  if (lower === "code" || lower === "chat") {
+    if (submode) return c.note(`/agent ${lower} takes no mode`);
+    return c.setKind({ type: lower });
+  }
+  // AIhub's profile names are lower case (agents.validate).
+  return c.setKind({ type: "agent", name: lower, submode: submode === "plan" ? "plan" : "build" });
+}
+
 // ── /undo ─────────────────────────────────────────────────────────────────────
 
 async function undo(c: Controller, arg: string): Promise<void> {
@@ -128,7 +147,7 @@ interface Rule {
 const ruleText = (r: Rule): string => (r.pattern ? `${oneLine(r.tool)}: ${oneLine(r.pattern)}` : oneLine(r.tool));
 
 async function rules(c: Controller, arg: string): Promise<void> {
-  if (!c.requireSession()) return;
+  if (!c.requireSession() || !c.requireCode("rules")) return;
   const word = arg.trim();
   const remove = /^remove(?:\s+(\S+))?$/i.exec(word);
   if (word !== "" && !remove) return c.note("usage: /rules, or /rules remove N");

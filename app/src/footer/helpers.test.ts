@@ -18,6 +18,7 @@ const perm = (over: Partial<PermissionState> = {}): PermissionState => ({
   suggestedRule: { tool: "edit_file", pattern: null, scope: "project" },
   mode: "build",
   reason: "",
+  hub: false,
   ...over,
 });
 

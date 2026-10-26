@@ -6,7 +6,9 @@
  *
  * The numbers never move: 1 yes; 2 yes and remember (only shown, and only a
  * key, when the engine suggests a rule); 3 no with a note. A "2" from habit
- * must never mean "remember" on one prompt and "no" on the next.
+ * must never mean "remember" on one prompt and "no" on the next. An AIhub
+ * chat/agent turn's prompt (`hub`) is a plain 1 yes / 3 no: AIhub's
+ * protocol carries neither a rule nor a message.
  *
  * Keys only count after a quiet moment: every key that arrives within
  * `guardMs` of the one before (or of the prompt's arrival) is dropped and
@@ -54,7 +56,7 @@ function ruleText(p: PermissionState): string {
   return r.pattern ? `${one(r.tool)}: ${one(r.pattern)}` : one(r.tool);
 }
 
-export type PermissionChoiceKind = "yes" | "always" | "note";
+export type PermissionChoiceKind = "yes" | "always" | "note" | "no";
 
 export interface PermissionOption {
   /** The number shown, and the key that picks it. */
@@ -91,7 +93,8 @@ export function permissionLayout(p: PermissionState, width: number, cursor: numb
     const rule = ruleText(p);
     labels.push({ n: 2, kind: "always", label: room >= 8 ? `${lead}${truncate(rule, room)}${tail}` : truncate(`${lead}${rule}${tail}`, width - 5) });
   }
-  labels.push({ n: 3, kind: "note", label: "No, and tell the model what to do instead" });
+  if (p.hub) labels.push({ n: 3, kind: "no", label: "No" });
+  else labels.push({ n: 3, kind: "note", label: "No, and tell the model what to do instead" });
   const options = labels.map(({ n, kind, label }, i) => {
     const on = i === cursor;
     const prefix = `${on ? G.pointer : " "} ${n}. `;
@@ -150,6 +153,7 @@ export function PermissionPrompt({ controller, permission: p, width, now, guardM
     const id = live.current.p.permissionId;
     if (kind === "yes") controller.answer("yes", id);
     else if (kind === "always") controller.answer("always", id);
+    else if (kind === "no") controller.answer({ no: null }, id);
     else {
       move(live.current.options.findIndex((o) => o.kind === "note"));
       edit(true);
