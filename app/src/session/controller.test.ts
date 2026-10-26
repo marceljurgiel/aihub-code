@@ -28,7 +28,6 @@ function make(over: Partial<{ width: number; config: Record<string, unknown> }> 
   bridge.answers["code.start"] = INFO;
   bridge.answers["code.mode"] = (p: Record<string, unknown>) => ({ mode: p.mode });
   bridge.answers["models.installed"] = { models: [{ name: "gemma4:cloud" }, { name: "llama3.2:3b" }] };
-  bridge.answers["cloud.models"] = { models: [{ name: "kimi-k3:cloud" }] };
   const sink = memorySink();
   let clock = 1000;
   const exits: string[] = [];
@@ -76,7 +75,7 @@ describe("start-up", () => {
     const { bridge, c } = make();
     expect(c.getState().phase).toBe("starting");
     await c.start({ cont: false, mode: "plan", mcp: ["files"], kb: ["docs"] });
-    expect(bridge.calls.map((x) => x.method)).toEqual(["config.get", "models.installed", "cloud.models", "code.start"]);
+    expect(bridge.calls.map((x) => x.method)).toEqual(["config.get", "code.start"]);
     expect(bridge.to("code.start")[0]!.params).toEqual({
       cwd: "/home/alex/proj",
       model: "gemma4:cloud",
@@ -802,32 +801,54 @@ describe("fix round 1", () => {
     expect(sink.lines).toContain("model ghost:7b isn't available on the server — pick one");
     expect(sink.styled.at(-1)![0]!.dim).toBe(true);
     await c.pick("llama3.2:3b");
-    expect(bridge.to("code.start")).toHaveLength(1);
     expect(bridge.to("code.start")[0]!.params).toMatchObject({ model: "llama3.2:3b" });
-    expect(bridge.to("cloud.models")).toHaveLength(1); // the picked model is not looked up again
+    expect(bridge.to("models.installed")).toHaveLength(2); // the pick itself is not looked up again
   });
 
-  test("I3: a cloud model listed by cloud.models starts normally", async () => {
+  test("I3: cloud.models is never asked during start-up", async () => {
     const { bridge, c } = make();
-    await c.start({ ...ARGS, model: "kimi-k3:cloud" });
+    await c.start({ ...ARGS, model: "llama3.2:3b" });
+    await make().c.start({ ...ARGS, model: "ghost:7b" });
+    expect(bridge.to("cloud.models")).toHaveLength(0);
     expect(bridge.to("code.start")).toHaveLength(1);
   });
 
-  test("I3: if a lookup fails (offline) code.start goes ahead", async () => {
-    for (const method of ["models.installed", "cloud.models"]) {
+  test("I3: an empty installed list (the engine's answer for an offline server) does not open the picker", async () => {
+    const { bridge, c } = make();
+    bridge.answers["models.installed"] = { models: [] };
+    await c.start({ ...ARGS, model: "llama3.2:3b" });
+    expect(bridge.to("code.start")).toHaveLength(1);
+    expect(c.getState().phase).toBe("idle");
+  });
+
+  test("I3: a cloud name that is not installed goes straight to code.start", async () => {
+    for (const name of ["kimi-k3:cloud", "gpt-oss:120b-cloud"]) {
       const { bridge, c } = make();
-      bridge.answers[method] = new Error("Ollama is offline");
-      await c.start({ ...ARGS, model: "ghost:7b" });
-      expect(bridge.to("code.start"), method).toHaveLength(1);
+      await c.start({ ...ARGS, model: name });
+      expect(bridge.to("code.start"), name).toHaveLength(1);
       expect(c.getState().phase).toBe("idle");
     }
   });
 
-  test("I3: an answer without a model list counts as a failed lookup", async () => {
+  test("I3: a name without a tag matches its :latest", async () => {
     const { bridge, c } = make();
-    bridge.answers["cloud.models"] = {};
-    await c.start({ ...ARGS, model: "ghost:7b" });
+    bridge.answers["models.installed"] = { models: [{ name: "qwen2.5-coder:latest" }, { name: "llama3.2:3b" }] };
+    await c.start({ ...ARGS, model: "qwen2.5-coder" });
     expect(bridge.to("code.start")).toHaveLength(1);
+    const other = make();
+    other.bridge.answers["models.installed"] = { models: [{ name: "qwen2.5-coder:7b" }] };
+    await other.c.start({ ...ARGS, model: "qwen2.5-coder" });
+    expect(other.c.getState().phase).toBe("picker"); // only :7b is installed, not :latest
+  });
+
+  test("I3: if the lookup fails (or has no list) code.start goes ahead", async () => {
+    for (const answer of [new Error("Ollama is offline"), {}]) {
+      const { bridge, c } = make();
+      bridge.answers["models.installed"] = answer;
+      await c.start({ ...ARGS, model: "ghost:7b" });
+      expect(bridge.to("code.start")).toHaveLength(1);
+      expect(c.getState().phase).toBe("idle");
+    }
   });
 
   test("I3: the configured default is checked too", async () => {

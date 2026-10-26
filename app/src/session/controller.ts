@@ -116,6 +116,11 @@ export interface ControllerOptions {
   onResume?: (messages: any[]) => void;
 }
 
+/** `gemma4:cloud`, `gpt-oss:120b-cloud`: runs on ollama.com. */
+const CLOUD_TAG = /:(?:[^:]*-)?cloud$/;
+/** `qwen2.5-coder` is `qwen2.5-coder:latest`. */
+const withTag = (name: string): string => (name.includes(":") ? name : `${name}:latest`);
+
 const MODES: Mode[] = ["build", "auto", "plan"];
 const SHELL_TOOLS = new Set(["run_terminal", "run_shell"]);
 
@@ -259,14 +264,17 @@ export class Controller {
     });
   }
 
+  /** True only when the server's own list is known and lacks the model. Never
+   *  blocks start-up: an empty or failed answer (the engine reports an offline
+   *  server as an empty list) and cloud names (not listed locally until used)
+   *  count as "unknown", and cloud.models is never asked (it can crawl the web). */
   private async modelMissing(model: string): Promise<boolean> {
+    if (CLOUD_TAG.test(model)) return false;
     try {
-      const [installed, cloud] = await Promise.all([
-        this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {}),
-        this.o.bridge.request<{ models?: { name: string }[] }>("cloud.models", {}),
-      ]);
-      if (!Array.isArray(installed.models) || !Array.isArray(cloud.models)) return false;
-      return ![...installed.models, ...cloud.models].some((m) => m.name === model);
+      const { models } = await this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {});
+      if (!Array.isArray(models) || models.length === 0) return false;
+      const want = withTag(model);
+      return !models.some((m) => withTag(String(m.name)) === want);
     } catch {
       return false;
     }
@@ -276,8 +284,8 @@ export class Controller {
     this.set({ phase: "picker", picker });
   }
 
-  /** With `check`, a model the server has under neither list opens the picker
-   *  instead. If a lookup fails (offline) we go ahead: the turn reports it. */
+  /** With `check`, a model missing from the server's installed list opens the
+   *  picker instead; if that cannot be told, we go ahead and the turn reports it. */
   private async startSession(model: string, check: boolean): Promise<void> {
     if (check && (await this.modelMissing(model))) return this.pickModel(model);
     const { mode, mcp, kb } = this.startArgs;
