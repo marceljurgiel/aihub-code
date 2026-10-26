@@ -278,6 +278,8 @@ export class Controller {
   // Images waiting for the next turn, and which models are known to see them.
   private readonly attachments = new Attachments();
   private vision = new Map<string, boolean>();
+  // The images of each queued prompt, in step with `state.queue`.
+  private queuedImages: Attachment[][] = [];
   // The code session as it was when another kind came in front.
   // The code session's knowledge bases and MCP as the engine has them (the
   // state mirrors them while the code agent is in front, or the chat's).
@@ -615,7 +617,10 @@ export class Controller {
     }
     // Always behind what is already waiting; it goes out at once only when
     // nothing is in the way (a turn, the session starting, a mode change).
-    this.set({ queue: [...this.state.queue, text] });
+    // The images attached so far belong to this prompt, not to a later one.
+    this.queuedImages.push(this.attachments.list());
+    this.attachments.clear();
+    this.set({ queue: [...this.state.queue, text], images: [] });
     this.drainQueue();
   }
 
@@ -645,22 +650,16 @@ export class Controller {
     if (!this.state.sessionId || this.o.bridge.deadError()) return;
     const [next, ...rest] = this.state.queue;
     if (next === undefined) return;
+    const images = this.queuedImages.shift() ?? [];
     this.set({ queue: rest });
-    this.sendTurn(next);
+    this.sendTurn(next, undefined, images);
   }
 
   /** A prompt goes to the kind in front: the code session (`code.turn`) or
    *  the AIhub conversation (`chat.turn`). `wire`: what the model gets when
    *  it isn't what was typed (a /skill's instructions; its echo is written). */
-  private sendTurn(text: string, wire?: string): void {
-    // The images waiting go with this turn (a queued prompt takes what is
-    // attached when it goes out).
-    const images = this.attachments.list();
+  private sendTurn(text: string, wire?: string, images: Attachment[] = []): void {
     const ids = images.map((a) => a.id);
-    if (images.length) {
-      this.attachments.clear();
-      this.set({ images: [] });
-    }
     if (wire === undefined) {
       this.write([[], ...fmtUser(text, this.o.width())]);
       if (images.length) this.write(fmtAttached(images, this.o.width()));
@@ -924,6 +923,7 @@ export class Controller {
     const n = this.state.queue.length;
     if (n > 0) this.note(`dropped ${n} queued prompt${n === 1 ? "" : "s"}`);
     this.set({ phase: "running", activity: { label: "interrupting…", since: this.now() }, permission: null, queue: [] });
+    this.queuedImages = [];
   }
 
   // ── mode ───────────────────────────────────────────────────────────────────
@@ -1638,6 +1638,7 @@ export class Controller {
     const n = this.state.queue.length;
     if (n === 0) return;
     this.note(`dropped ${n} queued prompt${n === 1 ? "" : "s"}`);
+    this.queuedImages = [];
     this.set({ queue: [] });
   }
 

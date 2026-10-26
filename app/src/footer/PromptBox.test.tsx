@@ -185,4 +185,61 @@ describe("images in the prompt", () => {
     await m.settle();
     expect(m.frame()).not.toContain("[image");
   });
+
+  describe("images follow the prompt they were attached for", () => {
+    const attach = async (n: Mounted, id: string) => {
+      n.bridge.answers["attach.paste"] = { attachments: [{ ...A1, id, name: `${id}.png` }] };
+      await type(n, "/tmp/x.png");
+      await enter(n);
+      await sleep(30);
+      await n.settle();
+    };
+    const running = async () => {
+      const n = await mount({ answers });
+      n.c.submit("first");
+      await n.settle();
+      return n;
+    };
+
+    test("queue A, attach X, queue B: A has no images, B has [X]", async () => {
+      m = await running();
+      m.c.submit("A");
+      await attach(m, "x1");
+      m.c.submit("B");
+      await m.settle();
+      expect(m.frame()).not.toContain("[image");
+      m.bridge.lastStream.finish({});
+      await m.settle();
+      expect(turns(m)[1]!.params).toEqual({ text: "A" });
+      m.bridge.lastStream.finish({});
+      await m.settle();
+      expect(turns(m)[2]!.params).toEqual({ text: "B", images: ["x1"] });
+    });
+
+    test("attach X, queue A: A has [X] and the chips clear at queue time", async () => {
+      m = await running();
+      await attach(m, "x1");
+      expect(m.frame()).toContain("[image x1.png]");
+      m.c.submit("A");
+      await m.settle();
+      expect(m.frame()).not.toContain("[image");
+      m.bridge.lastStream.finish({});
+      await m.settle();
+      expect(turns(m)[1]!.params).toEqual({ text: "A", images: ["x1"] });
+    });
+
+    test("an interrupt drops a queued prompt together with its images", async () => {
+      m = await running();
+      await attach(m, "x1");
+      m.c.submit("A");
+      m.c.cancel();
+      await m.settle();
+      m.bridge.lastStream.finish({ cancelled: true });
+      await m.settle();
+      expect(m.c.getState().queue).toEqual([]);
+      m.c.submit("C");
+      await m.settle();
+      expect(turns(m).at(-1)!.params).toEqual({ text: "C" });
+    });
+  });
 });
