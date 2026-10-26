@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -54,7 +55,13 @@ def _open_interactive(args: dict) -> None:
     env = dict(os.environ)
     env["AIHUB_CODE_ARGS"] = json.dumps(args)
     env["AIHUB_CODE_BRIDGE"] = json.dumps([sys.executable, "-m", "aihub_code.bridge"])
-    os.execvpe(bun, [bun, "run", str(entry)], env)
+    argv = [bun, "run", str(entry)]
+    if sys.platform == "win32":
+        # Windows has no real exec: os.execvpe starts a new process and returns the
+        # parent at once, so the shell prompt would come back under the running
+        # app. Wait for the child and pass its exit code on instead.
+        raise typer.Exit(subprocess.call(argv, env=env))
+    os.execvpe(bun, argv, env)
 
 
 def _version(value: bool) -> None:

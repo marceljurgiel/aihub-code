@@ -6,7 +6,7 @@
       "name": "aihub-code-app",
       "dependencies": {
         "@opentui/core": "0.5.6",
-        "@opentui/keymap": "^0.5.6",
+        "@opentui/keymap": "0.5.6",
         "@opentui/react": "0.5.6",
         "react": "^19.2.6",
       },
@@ -42,7 +42,7 @@
 
     "@opentui/core-win32-x64": ["@opentui/core-win32-x64@0.5.6", "", { "os": "win32", "cpu": "x64" }, "sha512-rWplkCuHX0OxVi7bO8dAVPttzPpCgmz6Bsu1XCm4ErPAhZOofRd5FbeW2+pC71AbLOKicSwI7lQ4mhGCNaweaA=="],
 
-    "@opentui/keymap": ["@opentui/keymap@0.5.17", "", { "dependencies": { "@opentui/core": "0.5.17" }, "peerDependencies": { "@opentui/react": "0.5.17", "@opentui/solid": "0.5.17", "react": ">=19.2.0", "solid-js": "1.9.12" }, "optionalPeers": ["@opentui/react", "@opentui/solid", "react", "solid-js"] }, "sha512-y8UdvkOhQVM+e5VlCv/f7m8AxVEWeXoHnjhxZ2SEXA+HKDfWjXjkptAyRhyMZ8wRgtNv2LJiSTHfzelBQk5Syg=="],
+    "@opentui/keymap": ["@opentui/keymap@0.5.6", "", { "dependencies": { "@opentui/core": "0.5.6" }, "peerDependencies": { "@opentui/react": "0.5.6", "@opentui/solid": "0.5.6", "react": ">=19.2.0", "solid-js": "1.9.12" }, "optionalPeers": ["@opentui/react", "@opentui/solid", "react", "solid-js"] }, "sha512-1lR1aFRSgHCwN31YOHDQQVSqz1YNN7DsoIvWHjEiQJ12kTxHg9G7Q1HHFJttM838RWsNOvW6gBAhOr403VL8rg=="],
 
     "@opentui/react": ["@opentui/react@0.5.6", "", { "dependencies": { "@opentui/core": "0.5.6", "react-reconciler": "^0.33.0" }, "peerDependencies": { "react": ">=19.2.0", "react-devtools-core": "^7.0.1", "ws": "^8.18.0" } }, "sha512-dMQTlcD1zlDTQC8r9rZKlHD7CORkY2M5D7tqhgoccoOK9p6q05FqrdRCTYHu1+VZYafqIV0k2IpMY2e34sngiQ=="],
 

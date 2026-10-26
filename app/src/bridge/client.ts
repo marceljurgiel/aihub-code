@@ -55,7 +55,10 @@ export class BridgeClient {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private buffer = "";
-  private readyResolvers: Array<(v: { version: string }) => void> = [];
+  private readyWaiters: Array<{ resolve: (v: { version: string }) => void; reject: (e: Error) => void }> = [];
+  /** Set once the bridge is gone (exit, or it never started): every request after
+   *  that rejects at once with this error instead of waiting for a dead process. */
+  private dead: Error | null = null;
   /** The ready banner, once received — kept so a late ready() still gets the
    *  engine version (it used to answer "?", shown as "core ?" in the footer). */
   private readyInfo: { version: string } | null = null;
@@ -67,27 +70,43 @@ export class BridgeClient {
 
   /** Launch the bridge subprocess and start reading its stdout. */
   start(): void {
-    this.proc = Bun.spawn(this.cmd, {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      // The bridge inherits the launch folder as its cwd: that is the project.
-      env: { ...process.env, PYTHONUTF8: "1" },
-    }) as Bun.Subprocess<"pipe", "pipe", "pipe">;
+    try {
+      this.proc = Bun.spawn(this.cmd, {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        // The bridge inherits the launch folder as its cwd: that is the project.
+        env: { ...process.env, PYTHONUTF8: "1" },
+      }) as Bun.Subprocess<"pipe", "pipe", "pipe">;
+    } catch (e) {
+      // python3 missing, bad AIHUB_CODE_BRIDGE: same outcome as an early exit.
+      debugLog(`bridge failed to start: ${e}`);
+      this.fail(new Error(`could not start the bridge (${this.cmd[0]}) — see ${bridgeErrLogPath()}`));
+      return;
+    }
     this.readStdout();
     this.drainStderr();
     this.proc.exited.then((code) => {
       debugLog(`bridge exited code=${code}`);
-      const err = new Error(`bridge process exited (code ${code})`);
-      for (const p of this.pending.values()) p.reject(err);
-      this.pending.clear();
+      if (this.dead) return; // destroy() already closed us on purpose
+      const where = this.readyInfo ? "bridge process exited" : "the bridge exited before it was ready";
+      this.fail(new Error(`${where} (code ${code}) — see ${bridgeErrLogPath()}`));
     });
   }
 
-  /** Wait until the bridge emits its `ready` banner. */
+  /** The bridge is gone: reject everything waiting, and everything that comes later. */
+  private fail(err: Error) {
+    this.dead = err;
+    for (const p of this.pending.values()) p.reject(err);
+    this.pending.clear();
+    for (const w of this.readyWaiters.splice(0)) w.reject(err);
+  }
+
+  /** Wait until the bridge emits its `ready` banner; rejects if it dies first. */
   ready(): Promise<{ version: string }> {
     if (this.readyInfo) return Promise.resolve(this.readyInfo);
-    return new Promise((resolve) => this.readyResolvers.push(resolve));
+    if (this.dead) return Promise.reject(this.dead);
+    return new Promise((resolve, reject) => this.readyWaiters.push({ resolve, reject }));
   }
 
   private async readStdout() {
@@ -129,7 +148,7 @@ export class BridgeClient {
       if (msg.event === "ready") {
         const info = { version: msg.data?.version ?? "?" };
         this.readyInfo = info;
-        this.readyResolvers.splice(0).forEach((r) => r(info));
+        this.readyWaiters.splice(0).forEach((w) => w.resolve(info));
       }
       return;
     }
@@ -154,9 +173,13 @@ export class BridgeClient {
 
   private write(obj: unknown) {
     const w = this.proc?.stdin;
-    if (!w) return;
-    (w as any).write(JSON.stringify(obj) + "\n");
-    (w as any).flush?.();
+    if (!w || this.dead) return;
+    try {
+      (w as any).write(JSON.stringify(obj) + "\n");
+      (w as any).flush?.();
+    } catch {
+      /* the pipe closed under us; the exit handler rejects what is pending */
+    }
   }
 
   /** One-shot request → resolves with the `done` payload. Alias of request(). */
@@ -168,6 +191,7 @@ export class BridgeClient {
   request<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
+      if (this.dead) return reject(this.dead);
       this.pending.set(id, { resolve, reject });
       this.write({ id, method, params });
     });
@@ -186,6 +210,7 @@ export class BridgeClient {
     if (typeof handlers === "function") handlers = { onEvent: handlers };
     const id = this.nextId++;
     const done = new Promise<any>((resolve, reject) => {
+      if (this.dead) return reject(this.dead);
       this.pending.set(id, { resolve, reject, handlers });
       this.write({ id, method, params });
     });
@@ -207,7 +232,12 @@ export class BridgeClient {
     this.send({ method: "chat.permission", params: { request_id: requestId, allow, ...extra } });
   }
 
+  /** Shut the bridge down. Requests still pending are dropped, not rejected: the
+   *  caller is quitting, and a rejection nobody awaits would print an error. */
   destroy() {
+    this.dead = new Error("the bridge was closed");
+    this.pending.clear();
+    this.readyWaiters.length = 0;
     try {
       this.proc?.stdin?.end?.();
     } catch {

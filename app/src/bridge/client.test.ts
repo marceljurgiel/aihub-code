@@ -103,3 +103,63 @@ for line in sys.stdin:
     else process.env.AIHUB_CODE_BRIDGE = prev;
   }
 });
+
+async function withBridge(argv: string[], fn: (b: BridgeClient) => Promise<void>) {
+  const prev = process.env.AIHUB_CODE_BRIDGE;
+  process.env.AIHUB_CODE_BRIDGE = JSON.stringify(argv);
+  const b = new BridgeClient();
+  try {
+    b.start();
+    await fn(b);
+  } finally {
+    b.destroy();
+    if (prev === undefined) delete process.env.AIHUB_CODE_BRIDGE;
+    else process.env.AIHUB_CODE_BRIDGE = prev;
+  }
+}
+
+test("ready() rejects when the bridge exits before the banner", async () => {
+  await withBridge(["sh", "-c", "exit 3"], async (b) => {
+    const err = await b.ready().then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err!.message).toContain("code 3");
+    expect(err!.message).toContain(bridgeErrLogPath());
+    // A later ready() still rejects (it must not hang).
+    await expect(b.ready()).rejects.toThrow("code 3");
+  });
+});
+
+test("ready() rejects when the bridge command does not exist", async () => {
+  await withBridge(["/nonexistent/python3", "-m", "aihub_code.bridge"], async (b) => {
+    const err = await b.ready().then(() => null, (e: Error) => e);
+    expect(err?.message).toContain(bridgeErrLogPath());
+  });
+});
+
+test("pending requests and streams reject when the bridge dies, and later ones fail at once", async () => {
+  const script = `import sys, json, os, time
+print(json.dumps({"id": None, "event": "ready", "data": {"version": "1"}}), flush=True)
+for line in sys.stdin:
+    m = json.loads(line)
+    if m["method"] == "die":
+        os._exit(7)
+`;
+  const dir = mkdtempSync(join(tmpdir(), "fake-bridge-"));
+  const file = join(dir, "bridge.py");
+  writeFileSync(file, script);
+  await withBridge(["python3", file], async (b) => {
+    await b.ready();
+    const events: string[] = [];
+    const s = b.stream("code.turn", {}, (e) => events.push(e));
+    const pending = b.call("never");
+    const sRes = s.done.then(() => null, (e: Error) => e);
+    const pRes = pending.then(() => null, (e: Error) => e);
+    b.call("die").catch(() => {});
+    expect((await sRes)?.message).toContain("code 7");
+    expect((await pRes)?.message).toContain(bridgeErrLogPath());
+    // After the exit: immediate rejection, no write to a dead pipe, no hang.
+    await expect(b.call("ping")).rejects.toThrow("code 7");
+    await expect(b.stream("code.turn", {}, () => {}).done).rejects.toThrow("code 7");
+    expect(() => b.send({ method: "chat.cancel", params: { request_id: 1 } })).not.toThrow();
+  });
+});

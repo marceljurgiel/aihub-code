@@ -150,3 +150,26 @@ def test_headless_still_runs_with_p(monkeypatch):
     r = CliRunner().invoke(app, ["-p", "fix it"])
     assert r.exit_code == 0 and calls == []
     assert seen["prompt"] == "fix it" and seen["mode"] == "build"
+
+
+def test_resume_equals_form_and_space_form_agree(monkeypatch):
+    calls = _patch_launch(monkeypatch)
+    for argv in (["--resume=abc"], ["--resume", "abc"]):
+        calls.clear()
+        assert CliRunner().invoke(app, argv).exit_code == 0
+        assert json.loads(calls[0][2]["AIHUB_CODE_ARGS"])["resume"] == "abc"
+
+
+def test_windows_runs_bun_as_a_child_and_returns_its_exit_code(monkeypatch):
+    # os.execvpe on Windows spawns a new process and returns the parent at once,
+    # so the shell prompt would come back while the app still owns the console.
+    monkeypatch.setattr(sys, "platform", "win32")
+    execs, children = _patch_launch(monkeypatch), []
+    monkeypatch.setattr(cli_mod.subprocess, "call",
+                        lambda argv, env=None: children.append((argv, env)) or 5)
+    r = CliRunner().invoke(app, ["--model", "m"])
+    assert r.exit_code == 5 and execs == []
+    (argv, env), = children
+    assert argv[:2] == ["/opt/bun/bin/bun", "run"] and argv[2].endswith("index.tsx")
+    assert json.loads(env["AIHUB_CODE_ARGS"])["model"] == "m"
+    assert json.loads(env["AIHUB_CODE_BRIDGE"])[1:] == ["-m", "aihub_code.bridge"]
