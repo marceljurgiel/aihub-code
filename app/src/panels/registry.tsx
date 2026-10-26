@@ -140,9 +140,9 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
         />
       );
     case "mcp":
-      return (close) => <McpModal onClose={() => close()} />;
+      return (close) => <McpModal onClose={() => { close(); c.mcpClosed(); }} />;
     case "knowledge":
-      return (close) => <KnowledgeModal onClose={() => close()} />;
+      return (close) => <KnowledgeModal onClose={() => { close(); c.knowledgeClosed(); }} />;
     case "schedule":
       return (close) => (
         <ScheduleModal

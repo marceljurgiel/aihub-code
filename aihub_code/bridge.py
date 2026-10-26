@@ -191,6 +191,7 @@ def _code_info(s) -> Dict[str, Any]:
         "backend": s.backend, "stream_model": s.stream_model,
         "temperature": _temperature(),
         "checkpoints": {"mode": s.checkpoints.mode, "note": s.checkpoints.note},
+        "mcp": bool(s.mcp), "knowledge": list(s.knowledge),
     }
 
 
@@ -380,9 +381,13 @@ def _h_code_options(p):
     if kb is not None and (not isinstance(kb, list) or not all(isinstance(x, str) for x in kb)):
         raise _CodeError("knowledge must be a list of names")
     mcp = p.get("mcp")
+    if mcp is not None and not isinstance(mcp, bool):
+        raise _CodeError("mcp must be true or false")
     with _claim_code():
         s = _code_session()
-        return s.set_options(mcp if isinstance(mcp, bool) else None, kb)
+        out = s.set_options(mcp, kb)
+        s.store().save(s)       # quitting right after must not lose the change
+        return out
 
 
 def _h_ping(p):

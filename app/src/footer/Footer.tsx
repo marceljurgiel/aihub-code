@@ -108,9 +108,14 @@ export function Footer(props: FooterProps) {
   const running = st.phase === "running" || st.phase === "permission";
   // AIhub's `/skill <name>` suggestions follow the commands.
   const skillHints = st.skills;
+  const kbHints = st.kbNames;
   const allCommands = useMemo(
-    () => (skillHints.length ? [...commands, ...skillHints.map((s) => ({ name: `skill ${s.name}`, hint: s.description }))] : commands),
-    [commands, skillHints],
+    () => [
+      ...commands,
+      ...skillHints.map((s) => ({ name: `skill ${s.name}`, hint: s.description })),
+      ...kbHints.map((n) => ({ name: `kb ${n}`, hint: "Use this knowledge base in this chat" })),
+    ],
+    [commands, skillHints, kbHints],
   );
   const matches = prompting ? slashMatches(typed, allCommands) : [];
   const hiNow = Math.min(hi, Math.max(0, matches.length - 1));

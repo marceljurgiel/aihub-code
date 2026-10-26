@@ -64,3 +64,30 @@ def test_options_need_session(monkeypatch):
     monkeypatch.setattr(bridge, "_code", None)
     with pytest.raises(bridge._CodeError, match="no code session"):
         bridge._h_code_options({"mcp": True})
+
+
+def test_non_bool_mcp_raises(started):
+    for bad in ("yes", 1, [], {}):
+        with pytest.raises(bridge._CodeError, match="mcp must be true or false"):
+            bridge._h_code_options({"mcp": bad})
+    assert started.mcp == []
+
+
+def test_options_are_saved_at_once(started, monkeypatch):
+    monkeypatch.setattr("aihub.knowledge.names", lambda: ["docs"])
+    saved = []
+    monkeypatch.setattr(type(started.store()), "save", lambda self, s: saved.append(list(s.knowledge)))
+    bridge._h_code_options({"knowledge": ["docs"]})
+    assert saved == [["docs"]]
+
+
+def test_saved_options_survive_resume(started, monkeypatch):
+    monkeypatch.setattr("aihub.knowledge.names", lambda: ["docs"])
+    bridge._h_code_options({"knowledge": ["docs"]})
+    again = CodeSession.resume(started.cwd, started.id)
+    assert again.knowledge == ["docs"]
+
+
+def test_info_carries_options(started):
+    info = bridge._code_info(started)
+    assert info["mcp"] is False and info["knowledge"] == []

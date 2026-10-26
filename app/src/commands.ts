@@ -62,6 +62,7 @@ export const COMMANDS: Command[] = [
   { name: "skills", help: "Browse, create and install skills", run: panel("skills") },
   { name: "skill", args: "<name> [task]", help: "Use a skill → /skill <name> <task>", run: panelOr("skills", (c, a) => skill(c, a)) },
   { name: "mcp", help: "Connections: Google, GitHub and other services", run: panel("mcp") },
+  { name: "kb", args: "[name…|off]", help: "Answer from a knowledge base in this chat, or list them", run: (c, arg) => c.applyKb(arg.trim()) },
   { name: "knowledge", help: "Knowledge bases: search your own documents", run: panel("knowledge") },
   { name: "schedule", args: "[run <name>]", help: "Scheduled tasks: agents on a timetable", run: panelOr("schedule", (c, a) => soon(c, `/schedule ${a}`)) },
   { name: "history", help: "AIhub's saved conversations", run: panel("history") },

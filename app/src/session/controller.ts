@@ -154,6 +154,13 @@ export interface ControllerState {
   prefill: { text: string; seq: number } | null;
   /** The enabled skills, for the footer's `/skill <name>` suggestions. */
   skills: { name: string; description: string }[];
+  /** The knowledge bases this conversation draws on (`/kb`): the code
+   *  session's, or the AIhub chat's, whichever is in front. */
+  knowledge: string[];
+  /** MCP servers are on for the code session. */
+  mcp: boolean;
+  /** Every knowledge base there is, for `/kb <name>` suggestions. */
+  kbNames: string[];
 }
 
 export type PermissionChoice = "yes" | "always" | { no: string | null };
@@ -237,6 +244,9 @@ export class Controller {
     panel: null,
     prefill: null,
     skills: [],
+    knowledge: [],
+    mcp: false,
+    kbNames: [],
   };
   private listeners = new Set<() => void>();
   private turn: Turn | null = null;
@@ -260,6 +270,15 @@ export class Controller {
   // The AIhub conversation in front (chat / agent kinds), or null.
   private hub: HubChat | null = null;
   // The code session as it was when another kind came in front.
+  // The code session's knowledge bases and MCP as the engine has them (the
+  // state mirrors them while the code agent is in front, or the chat's).
+  private codeOpts: { mcp: boolean; knowledge: string[] } = { mcp: false, knowledge: [] };
+  // A change asked for while a turn runs: it goes out when the turn is over.
+  private pendingOpts: { mcp?: boolean; knowledge?: string[]; done: (() => void)[] } | null = null;
+  private optsBusy = false;
+  // /kb or /mcp changed something: a new code session carries it over.
+  private optsTouched = false;
+  private kbList: { name: string; description: string }[] = [];
   private codeSnap: { model: string; backend: Backend; streamModel: string; ctx: { used: number; limit: number } } | null = null;
   // Plain chat's context while an agent enlarged it (AIhub restores it).
   private chatCtx: number | null = null;
@@ -471,15 +490,25 @@ export class Controller {
   private async startSession(model: string, check: boolean, opts: BeginOptions & { mode?: Mode } = {}): Promise<void> {
     if (check && (await this.modelMissing(model))) return this.pickModel(model);
     const { mcp, kb } = this.startArgs;
-    const info = await this.o.bridge.request("code.start", {
+    // A /clear or /model keeps what /kb and /mcp chose (a start flag otherwise).
+    const carry = this.optsTouched ? this.wantedOpts() : null;
+    this.pendingOpts = null;
+    let info = await this.o.bridge.request("code.start", {
       cwd: this.o.cwd ?? process.cwd(),
       model,
       mode: opts.mode ?? this.startArgs.mode,
       mcp,
-      knowledge: kb,
+      knowledge: carry ? carry.knowledge : kb,
       ...(opts.backend ? { backend: opts.backend } : {}),
       ...(opts.streamModel ? { stream_model: opts.streamModel } : {}),
     });
+    if (carry && carry.mcp !== !!info.mcp) {
+      try {
+        info = { ...info, ...(await this.o.bridge.request("code.options", { mcp: carry.mcp })) };
+      } catch (e) {
+        this.error(`Keeping MCP ${carry.mcp ? "on" : "off"} failed: ${errText(e)}`);
+      }
+    }
     this.turnsSent = 0;
     this.resumed = false;
     this.begin(info, model, undefined, opts);
@@ -512,6 +541,10 @@ export class Controller {
       if (project.is_git === false) this.note("not a git repository");
     }
     this.checkpointNote(info.checkpoints?.note);
+    this.codeOpts = {
+      mcp: typeof info.mcp === "boolean" ? info.mcp : this.startArgs.mcp.length > 0,
+      knowledge: Array.isArray(info.knowledge) ? info.knowledge.map(String) : [...this.startArgs.kb],
+    };
     // A new conversation: the one before is learned from now, this one afresh.
     this.learner.reset();
     if (resumedMessages) this.o.onResume?.(resumedMessages); // before any queued prompt is written
@@ -527,6 +560,8 @@ export class Controller {
       sessionId: String(info.session_id ?? ""),
       ctx: { used: 0, limit: Number(info.context_length) || 0 },
       todos: [],
+      mcp: this.codeOpts.mcp,
+      ...(this.state.kind.type === "code" ? { knowledge: [...this.codeOpts.knowledge] } : {}),
     });
     this.drainQueue();
   }
@@ -589,6 +624,11 @@ export class Controller {
   private drainQueue(): void {
     if (this.exited || this.turn || this.modeBusy || this.undoBusy || this.listing || this.switching || this.invoking) return;
     if (this.state.confirm || this.state.picker || this.state.phase === "starting") return;
+    // /kb or /mcp asked for during a turn: the engine takes it before the next one.
+    if ((this.pendingOpts || this.optsBusy) && this.state.sessionId) {
+      void this.flushOptions();
+      return;
+    }
     // A turn under an open panel would squeeze into the row above it, and a
     // permission prompt would unmount the window: the queue waits for closePanel.
     if (this.state.panel) return;
@@ -1299,6 +1339,121 @@ export class Controller {
     this.set({ skills: list.filter((s) => s.enabled !== false).map((s) => ({ name: String(s.name), description: String(s.description ?? "") })) });
   }
 
+  // ── knowledge bases and MCP ────────────────────────────────────────────────
+
+  /** The bases for `/kb` and its suggestions (AIhub's refreshKb). */
+  async refreshKb(): Promise<void> {
+    try {
+      const d = await this.o.bridge.request<{ bases?: { name: string; description?: string }[] }>("kb.list", {});
+      this.kbList = (Array.isArray(d?.bases) ? d.bases : []).map((b) => ({ name: String(b.name), description: String(b.description ?? "") }));
+      this.set({ kbNames: this.kbList.map((b) => b.name) });
+    } catch (e) {
+      if (!this.exited && !this.o.bridge.deadError()) this.error(`Listing knowledge bases failed: ${errText(e)}`);
+    }
+  }
+
+  /** The knowledge window closed: it may have made, changed or deleted bases. */
+  knowledgeClosed(): void {
+    void this.refreshKb();
+  }
+
+  /** The connections window closed. Under the code agent its MCP follows the
+   *  servers: on while any is enabled. (An AIhub chat picks the tools per
+   *  message from the enabled servers itself.) */
+  mcpClosed(): void {
+    if (this.state.kind.type === "code") void this.syncMcp();
+  }
+
+  private async syncMcp(): Promise<void> {
+    if (!this.state.sessionId) return;
+    try {
+      const d = await this.o.bridge.request<{ servers?: { enabled?: boolean }[] }>("mcp.list", {});
+      const on = (Array.isArray(d?.servers) ? d.servers : []).some((x) => x.enabled !== false);
+      if (on === this.wantedOpts().mcp) return;
+      this.optsTouched = true;
+      this.codeOptions({ mcp: on });
+    } catch (e) {
+      if (!this.exited && !this.o.bridge.deadError()) this.error(`Reading the connections failed: ${errText(e)}`);
+    }
+  }
+
+  /** What the code session will have once a waiting change is in. */
+  private wantedOpts(): { mcp: boolean; knowledge: string[] } {
+    const p = this.pendingOpts;
+    return { mcp: p?.mcp ?? this.codeOpts.mcp, knowledge: [...(p?.knowledge ?? this.codeOpts.knowledge)] };
+  }
+
+  /** Ask the code session for other options. The engine refuses while a turn
+   *  runs, so then it waits (`done` says its note afterwards). */
+  private codeOptions(change: { mcp?: boolean; knowledge?: string[] }, done?: () => void): void {
+    const p = this.pendingOpts ?? { done: [] };
+    this.pendingOpts = { ...p, ...change, done: done ? [...p.done, done] : p.done };
+    void this.flushOptions();
+  }
+
+  private async flushOptions(): Promise<void> {
+    if (this.optsBusy) return;
+    this.optsBusy = true;
+    try {
+      while (this.pendingOpts && this.canFlushOptions()) {
+        const { done, ...change } = this.pendingOpts;
+        this.pendingOpts = null;
+        try {
+          const r = await this.o.bridge.request<{ mcp?: boolean; knowledge?: string[] }>("code.options", change);
+          this.codeOpts = {
+            mcp: typeof r?.mcp === "boolean" ? r.mcp : (change.mcp ?? this.codeOpts.mcp),
+            knowledge: Array.isArray(r?.knowledge) ? r.knowledge.map(String) : (change.knowledge ?? this.codeOpts.knowledge),
+          };
+          this.set({ mcp: this.codeOpts.mcp, ...(this.state.kind.type === "code" ? { knowledge: [...this.codeOpts.knowledge] } : {}) });
+          for (const f of done) f();
+        } catch (e) {
+          if (!this.exited && !this.o.bridge.deadError()) this.error(errText(e));
+        }
+      }
+    } finally {
+      this.optsBusy = false;
+      // A turn that started meanwhile ends in drainQueue, which comes back here.
+      if (this.pendingOpts && this.canFlushOptions()) this.drainQueue();
+    }
+  }
+
+  private canFlushOptions(): boolean {
+    return !this.turn && !this.switching && this.state.phase !== "starting" && !!this.state.sessionId;
+  }
+
+  /** `/kb`: list the bases, `/kb <name…>` switches them on for this chat,
+   *  `/kb off` stops (AIhub's applyKb, same texts). The code agent's go
+   *  through code.options; an AIhub chat's are sent with each turn. */
+  applyKb(arg: string): void {
+    if (!this.requireSession()) return;
+    const hub = this.state.kind.type === "code" ? null : this.hub;
+    const on = hub ? hub.knowledge : this.wantedOpts().knowledge;
+    const use = (next: string[], text: string) => {
+      this.optsTouched = true;
+      if (hub) {
+        hub.knowledge = next;
+        this.set({ knowledge: [...next] });
+        this.note(text);
+      } else {
+        this.codeOptions({ knowledge: next }, () => this.note(text));
+      }
+    };
+    if (!arg) {
+      if (!this.kbList.length) return this.note("No knowledge bases yet \u2014 /knowledge (F6) makes one from your documents.");
+      return this.note(
+        "Knowledge bases: " +
+          this.kbList.map((b) => `${on.includes(b.name) ? "\u2713 " : ""}${b.name}${b.description ? ` (${b.description})` : ""}`).join(" \u00b7 ") +
+          (on.length ? `\nActive here: ${on.join(", ")} \u2014 /kb off to stop.` : "\nUse one here: /kb <name>."),
+      );
+    }
+    if (arg === "off") return use([], "Knowledge off for this chat.");
+    const names = arg.split(/[\s,]+/).filter(Boolean);
+    const unknown = names.filter((n) => !this.kbList.some((b) => b.name === n));
+    if (unknown.length) return this.error(`No knowledge base called ${unknown.join(", ")} \u2014 /kb lists them.`);
+    const next = [...new Set([...on, ...names])];
+    use(next, `\u00b6 Using ${next.join(", ")} in this chat \u2014 answers draw on those documents and cite them [1]. /kb off stops.`);
+  }
+
   // ── kinds: the code agent, plain chat, AIhub agents ────────────────────────
 
   /** `/agent code|chat|<profile>`, the agents window. A running turn is
@@ -1362,7 +1517,7 @@ export class Controller {
       // Old messages were already there to learn from; only new ones count.
       this.learner.reset(messages.filter((x) => x.role === "user").length);
       this.hub = hub;
-      this.set({ kind: k, ctx: { used: 0, limit } });
+      this.set({ kind: k, ctx: { used: 0, limit }, knowledge: [] });
       this.write(fmtDivider(kindHeader(k, this.state.mode, m.model), this.o.width()));
       this.o.onResume?.(messages);
       const n = messages.filter((x) => x.role === "user" || x.role === "assistant").length;
@@ -1416,11 +1571,12 @@ export class Controller {
     const m = this.current();
     if (snap && snap.model === m.model && snap.backend === m.backend && (snap.streamModel || snap.model) === m.streamModel) {
       this.learner.reset(); // the AIhub conversation ends
-      this.set({ kind: CODE, ctx: snap.ctx });
+      this.set({ kind: CODE, ctx: snap.ctx, knowledge: [...this.codeOpts.knowledge] });
       this.write(fmtDivider(kindHeader(CODE, this.state.mode, m.model), this.o.width()));
+      void this.syncMcp(); // /mcp may have changed while another kind was in front
     } else {
       await this.startSession(m.model, false, { mode: this.state.mode, divider: "model", backend: m.backend, streamModel: m.streamModel });
-      this.set({ kind: CODE });
+      this.set({ kind: CODE, knowledge: [...this.codeOpts.knowledge] });
     }
     this.hub = null;
     this.codeSnap = null;
@@ -1441,7 +1597,8 @@ export class Controller {
     else if (Number(o.check?.context) > 0) limit = Number(o.check!.context);
     this.learner.reset();
     this.hub = hub;
-    this.set({ kind: k, model: m.model, backend: m.backend, streamModel: m.streamModel, ctx: { used: 0, limit } });
+    // A new chat starts with no knowledge bases (AIhub's new chat does).
+    this.set({ kind: k, model: m.model, backend: m.backend, streamModel: m.streamModel, ctx: { used: 0, limit }, knowledge: [] });
     this.write(fmtDivider(o.divider ?? kindHeader(k, this.state.mode, m.model), this.o.width()));
     // On entering an agent (not on /clear under it): what it can do.
     if (k.type === "agent" && o.check) this.note(agentNote(o.check.agent ?? { name: k.name }, k.submode, o.check, m.model, limit));

@@ -213,6 +213,6 @@ export function launch(o: LaunchOptions): Launched {
     </AppKeymapProvider>,
   );
   // AIhub lists the skills at start for the prompt's `/skill <name>` suggestions.
-  void controller.start(o.args).then(() => controller.refreshSkills());
+  void controller.start(o.args).then(() => Promise.all([controller.refreshSkills(), controller.refreshKb()]));
   return { controller, sink, transcript, closed, shutdown };
 }
