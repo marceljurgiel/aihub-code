@@ -796,6 +796,96 @@ describe("pickers", () => {
   });
 });
 
+describe("the undo question", () => {
+  const PLAN = { turn_id: "t", restore: ["calc.py"], delete: [], conflicts: [], shell_not_reverted: [], skipped: [], mode: "shadow", applied: false };
+  const asked = async (opts: Parameters<typeof mount>[0] = {}) => {
+    const n = await mount({ ...opts, answers: { "code.undo": (p: Record<string, unknown>) => ({ ...PLAN, applied: p.confirm === true }), ...(opts.answers ?? {}) } });
+    await type(n, "/undo");
+    await enter(n);
+    return n;
+  };
+  const undoCalls = (n: Mounted) => n.bridge.to("code.undo").map((c) => c.params);
+
+  test("replaces the input box: what changes, the question, the keys", async () => {
+    m = await asked();
+    const l = text(m);
+    expect(l).toContain("restore 1 file");
+    expect(l).toContain("Undo these changes? (y/N)");
+    expect(l).toContain("y yes · n no · esc no");
+    expect(l).not.toContain("│ >");
+    expect(m.sink.lines.join("\n")).toContain("  restore  calc.py");
+    expect(m.lines().length).toBe(m.heights.at(-1)!);
+  });
+
+  test("y undoes it and the input box comes back", async () => {
+    m = await asked();
+    await press(m, "y");
+    expect(undoCalls(m)).toEqual([{}, { confirm: true }]);
+    expect(m.sink.lines.at(-1)).toBe("undone: restored 1 file");
+    expect(text(m)).toContain("│ >");
+    expect(text(m)).not.toContain("Undo these changes");
+  });
+
+  test.each([["n"], ["escape"], ["return"]])("%s leaves everything as it was", async (key) => {
+    m = await asked();
+    if (key === "escape") await esc(m);
+    else if (key === "return") await enter(m);
+    else await press(m, key);
+    expect(undoCalls(m)).toEqual([{}]);
+    expect(m.sink.lines.at(-1)).toBe("nothing was undone");
+    expect(text(m)).toContain("│ >");
+  });
+
+  test("Ctrl+C is No, not an exit", async () => {
+    m = await asked();
+    await press(m, "c", { ctrl: true });
+    expect(undoCalls(m)).toEqual([{}]);
+    expect(m.exits).toEqual([]);
+    expect(text(m)).toContain("│ >");
+  });
+
+  test("other keys do nothing and are not typed", async () => {
+    m = await asked();
+    await type(m, "hello");
+    expect(m.c.getState().confirm).not.toBeNull();
+    expect(undoCalls(m)).toEqual([{}]);
+    await press(m, "n");
+    expect(text(m)).not.toContain("hello");
+  });
+
+  test("a typed-ahead y within the first moments is ignored", async () => {
+    m = await asked({ guardMs: 300 });
+    await press(m, "y");
+    expect(undoCalls(m)).toEqual([{}]);
+    m.clock.t += 400;
+    await press(m, "y");
+    expect(undoCalls(m)).toEqual([{}, { confirm: true }]);
+  });
+
+  test("a narrow terminal: nothing wider than the screen", async () => {
+    m = await asked({ width: 24 });
+    for (const l of m.lines()) expect(l.length).toBeLessThanOrEqual(24);
+    expect(m.lines().length).toBe(m.heights.at(-1)!);
+  });
+});
+
+describe("activity while idle", () => {
+  test('"loading models…" has no "esc to interrupt": there is nothing to interrupt', async () => {
+    m = await mount({ answers: { "cloud.models": { models: [] } } });
+    let release!: (v: unknown) => void;
+    const orig = m.bridge.request.bind(m.bridge);
+    m.bridge.request = ((method: string, params: Record<string, unknown> = {}) =>
+      method === "cloud.models" ? new Promise<unknown>((r) => (release = r)) : orig(method, params)) as typeof m.bridge.request;
+    await type(m, "/model");
+    await enter(m);
+    expect(text(m)).toContain("loading models…");
+    expect(text(m)).not.toContain("esc to interrupt");
+    release({ models: [] });
+    await m.settle();
+    expect(text(m)).toContain("Choose a model");
+  });
+});
+
 describe("narrow terminals", () => {
   test.each([8, 12, 20])("%d columns: nothing crashes, nothing is wider", async (w) => {
     m = await running({ width: w });

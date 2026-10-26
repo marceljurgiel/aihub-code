@@ -19,17 +19,21 @@ import type { StreamHandle } from "../bridge/client";
 import type { Args, Mode } from "../args";
 import { G } from "../glyphs";
 import type { Line, ScrollbackSink } from "../scrollback";
-import type { CompactionEvent, DiffEvent, TodoItem, ToolCallEvent, ToolResultEvent } from "../transcript/events";
+import type { CompactionEvent, DiffEvent, TodoItem, ToolCallEvent, ToolResultEvent, UndoPlan } from "../transcript/events";
 import {
   fmtCompaction,
   fmtDiff,
+  fmtDivider,
   fmtError,
   fmtHeader,
   fmtNote,
   fmtTodos,
+  fmtUndoConflicts,
+  fmtUndoPlan,
   fmtToolCall,
   fmtToolResult,
   fmtUser,
+  undoSummary,
 } from "../transcript/format";
 import { MarkdownStreamer } from "../transcript/markdown";
 import { sanitize, stripCR } from "../width";
@@ -78,6 +82,15 @@ export interface PickerState {
   items: PickerItem[];
 }
 
+/** A yes/no question the footer asks in place of the input box (`/undo`). */
+export interface ConfirmState {
+  question: string;
+  /** One line above the question, e.g. what would be restored. */
+  detail: string;
+  /** The undo goes ahead over files that changed after the turn. */
+  force: boolean;
+}
+
 export interface ControllerState {
   phase: Phase;
   mode: Mode;
@@ -91,6 +104,7 @@ export interface ControllerState {
   /** The message behind phase "error". */
   error: string | null;
   picker: PickerState | null;
+  confirm: ConfirmState | null;
 }
 
 export type PermissionChoice = "yes" | "always" | { no: string | null };
@@ -121,6 +135,11 @@ const CLOUD_TAG = /:(?:[^:]*-)?cloud$/;
 /** `qwen2.5-coder` is `qwen2.5-coder:latest`. */
 const withTag = (name: string): string => (name.includes(":") ? name : `${name}:latest`);
 
+interface BeginOptions {
+  /** Write a divider instead of the header: the conversation continues below. */
+  divider?: "clear" | "model";
+}
+
 const MODES: Mode[] = ["build", "auto", "plan"];
 const SHELL_TOOLS = new Set(["run_terminal", "run_shell"]);
 
@@ -143,6 +162,7 @@ export class Controller {
     todos: [],
     error: null,
     picker: null,
+    confirm: null,
   };
   private listeners = new Set<() => void>();
   private turn: Turn | null = null;
@@ -156,6 +176,8 @@ export class Controller {
   private modeConfirmed: Mode = "build";
   private modeWanted: Mode | null = null;
   private modeBusy = false;
+  // An undo is in flight (preview or confirm): no turn may start meanwhile.
+  private undoBusy = false;
 
   constructor(private readonly o: ControllerOptions) {}
 
@@ -179,16 +201,26 @@ export class Controller {
     return (this.o.now ?? Date.now)();
   }
 
-  private write(lines: Line[]): void {
+  /** The terminal width now (commands wrap their own lines). */
+  columns(): number {
+    return this.o.width();
+  }
+
+  write(lines: Line[]): void {
     if (lines.length) this.o.sink.write(lines);
   }
 
-  private error(text: string): void {
+  error(text: string): void {
     this.write(fmtError(text, this.o.width()));
   }
 
-  private note(text: string): void {
+  note(text: string): void {
     this.write(fmtNote(text, this.o.width()));
+  }
+
+  /** A bridge call for the commands. */
+  request<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    return this.o.bridge.request<T>(method, params);
   }
 
   // ── start-up ───────────────────────────────────────────────────────────────
@@ -232,16 +264,24 @@ export class Controller {
     }
   }
 
-  /** Picker answer: a model (before the first session) or a session to resume. */
+  /** Picker answer: a model or a session to resume (at start-up, or from /model
+   *  and /sessions). Esc with a live session just closes the picker; before
+   *  the first session it means "no choice": a new session on the default
+   *  model, or leaving when there is no model. */
   async pick(id: string | null): Promise<void> {
     const picker = this.state.picker;
     if (!picker) return;
-    // "starting" while the session comes up: prompts typed meanwhile queue.
-    this.set({ picker: null, phase: "starting" });
-    try {
+    const live = this.state.sessionId !== "";
+    if (id === null && live) {
+      this.set({ picker: null, phase: "idle" });
+      this.drainQueue();
+      return;
+    }
+    await this.replaceSession(async () => {
       if (picker.kind === "model") {
         if (id === null) return this.exit();
-        await this.startSession(id, false); // it came from the server's own list
+        // It came from the server's own list.
+        await this.startSession(id, false, live ? { mode: this.state.mode, divider: "model" } : {});
       } else if (id === null) {
         const model = (await this.o.bridge.request<Record<string, unknown>>("config.get", {})).default_chat_model;
         if (!model) return await this.pickModel();
@@ -249,8 +289,23 @@ export class Controller {
       } else {
         await this.resume(id);
       }
+    });
+  }
+
+  /** "starting" while a session comes up: prompts typed meanwhile queue. If it
+   *  fails, a live session stays as it was and the failure is just printed. */
+  private async replaceSession(open: () => Promise<void>): Promise<void> {
+    this.set({ picker: null, phase: "starting" });
+    try {
+      await open();
     } catch (e) {
-      this.failStart(e);
+      if (this.state.sessionId && !this.o.bridge.deadError()) {
+        this.error(errText(e));
+        this.set({ phase: "idle" });
+        this.drainQueue();
+      } else {
+        this.failStart(e);
+      }
     }
   }
 
@@ -286,39 +341,47 @@ export class Controller {
 
   /** With `check`, a model missing from the server's installed list opens the
    *  picker instead; if that cannot be told, we go ahead and the turn reports it. */
-  private async startSession(model: string, check: boolean): Promise<void> {
+  private async startSession(model: string, check: boolean, opts: BeginOptions & { mode?: Mode } = {}): Promise<void> {
     if (check && (await this.modelMissing(model))) return this.pickModel(model);
-    const { mode, mcp, kb } = this.startArgs;
+    const { mcp, kb } = this.startArgs;
     const info = await this.o.bridge.request("code.start", {
       cwd: this.o.cwd ?? process.cwd(),
       model,
-      mode,
+      mode: opts.mode ?? this.startArgs.mode,
       mcp,
       knowledge: kb,
     });
-    this.begin(info, model);
+    this.turnsSent = 0;
+    this.resumed = false;
+    this.begin(info, model, undefined, opts);
   }
 
   private async resume(sessionId: string): Promise<void> {
     const info = await this.o.bridge.request("code.resume", { cwd: this.o.cwd ?? process.cwd(), session_id: sessionId });
+    this.turnsSent = 0;
     this.resumed = true;
     this.begin(info, "", Array.isArray(info.messages) ? info.messages : undefined);
   }
 
-  /** The session exists: header, notes, the resumed conversation, state. */
-  private begin(info: any, fallbackModel: string, resumedMessages?: any[]): void {
+  /** The session exists: header (or a divider when the conversation goes on
+   *  below an earlier one), notes, the resumed conversation, state. */
+  private begin(info: any, fallbackModel: string, resumedMessages?: any[], opts: BeginOptions = {}): void {
     const project = info.project ?? {};
     const model = String(info.model || fallbackModel);
     const mode = MODES.includes(info.mode) ? (info.mode as Mode) : "build";
     this.modeConfirmed = mode;
-    this.write(
-      fmtHeader(
-        { version: this.version, model, mode, root: String(project.root ?? ""), branch: project.branch, home: this.o.home },
-        this.o.width(),
-      ),
-    );
-    if (project.instruction_file) this.note(`${project.instruction_file} loaded`);
-    if (project.is_git === false) this.note("not a git repository");
+    if (opts.divider) {
+      this.write(fmtDivider(opts.divider === "model" ? `new session with ${model}` : "new session", this.o.width()));
+    } else {
+      this.write(
+        fmtHeader(
+          { version: this.version, model, mode, root: String(project.root ?? ""), branch: project.branch, home: this.o.home },
+          this.o.width(),
+        ),
+      );
+      if (project.instruction_file) this.note(`${project.instruction_file} loaded`);
+      if (project.is_git === false) this.note("not a git repository");
+    }
     this.checkpointNote(info.checkpoints?.note);
     if (resumedMessages) this.o.onResume?.(resumedMessages); // before any queued prompt is written
     this.set({
@@ -329,6 +392,7 @@ export class Controller {
       model,
       sessionId: String(info.session_id ?? ""),
       ctx: { used: 0, limit: Number(info.context_length) || 0 },
+      todos: [],
     });
     this.drainQueue();
   }
@@ -348,8 +412,17 @@ export class Controller {
 
   // ── prompts ────────────────────────────────────────────────────────────────
 
+  /** A line from the prompt: `/command args` runs at once (never queued);
+   *  `//text` is a prompt that begins with a slash; anything else is a prompt. */
   submit(text: string): void {
     if (text.trim() === "") return;
+    const head = text.trimStart();
+    if (head.startsWith("//")) text = head.slice(1);
+    else if (head.startsWith("/")) {
+      const m = /^\/(\S*)\s*([\s\S]*)$/.exec(head.trimEnd())!;
+      void this.runCommand(m[1]!.toLowerCase(), m[2]!);
+      return;
+    }
     const dead = this.o.bridge.deadError();
     if (dead) return this.bridgeGone(dead);
     const { phase } = this.state;
@@ -371,7 +444,7 @@ export class Controller {
   }
 
   private drainQueue(): void {
-    if (this.turn || this.modeBusy || this.state.phase === "starting") return;
+    if (this.turn || this.modeBusy || this.undoBusy || this.state.confirm || this.state.phase === "starting") return;
     if (!this.state.sessionId || this.o.bridge.deadError()) return;
     const [next, ...rest] = this.state.queue;
     if (next === undefined) return;
@@ -382,10 +455,16 @@ export class Controller {
   private sendTurn(text: string): void {
     this.write([[], ...fmtUser(text, this.o.width())]);
     this.turnsSent++;
+    this.startStream("code.turn", { text }, "thinking…");
+  }
+
+  /** A streaming call the engine runs on the session (a turn, a compaction):
+   *  one at a time, cancellable, its events drawn by onEvent. */
+  private startStream(method: string, params: Record<string, unknown>, label: string): void {
     const turn: Turn = { handle: null, cancelled: false, streamer: new MarkdownStreamer(this.o.width()) };
     this.turn = turn;
-    this.set({ phase: "running", activity: { label: "thinking…", since: this.now() } });
-    turn.handle = this.o.bridge.stream("code.turn", { text }, (event, data) => this.onEvent(turn, event, data));
+    this.set({ phase: "running", activity: { label, since: this.now() } });
+    turn.handle = this.o.bridge.stream(method, params, (event, data) => this.onEvent(turn, event, data));
     turn.handle.done.then(
       () => this.onDone(turn),
       (err) => this.onFail(turn, err),
@@ -437,6 +516,7 @@ export class Controller {
       case "code_compaction":
         this.flush(turn);
         this.write(fmtCompaction(data as CompactionEvent, this.state.ctx.limit || undefined));
+        if (typeof data.after === "number") this.set({ ctx: { ...this.state.ctx, used: data.after } });
         break;
       case "code_context":
         this.set({ ctx: { used: Number(data.used) || 0, limit: Number(data.limit) || this.state.ctx.limit } });
@@ -598,7 +678,9 @@ export class Controller {
   async runCommand(name: string, arg: string): Promise<void> {
     const fn = this.o.commands?.[name];
     if (!fn) {
-      this.note(`unknown command /${sanitize(name)} — /help lists them`);
+      this.note(`unknown command /${sanitize(name)} \u2014 /help lists them`);
+      // `/home/alex/x.py is broken` was meant as a prompt.
+      if (name.includes("/")) this.note("to send text that starts with /, start it with //");
       return;
     }
     try {
@@ -606,6 +688,172 @@ export class Controller {
     } catch (e) {
       this.error(errText(e));
     }
+  }
+
+  /** For commands that need a session; says so when there is none. */
+  requireSession(): boolean {
+    if (this.state.sessionId) return true;
+    this.note("no session yet");
+    return false;
+  }
+
+  /** For commands that change or replace the session: only between turns. */
+  private canSwitch(): boolean {
+    const { phase, confirm } = this.state;
+    if (phase === "starting") {
+      this.note("wait until the session is ready");
+      return false;
+    }
+    if (this.turn || this.modeBusy || this.undoBusy || confirm || phase === "permission") {
+      this.note("wait for the current turn to finish");
+      return false;
+    }
+    return true;
+  }
+
+  /** `/mode`: the mode in effect, or a change to it. */
+  mode(arg: string): void {
+    if (!this.requireSession()) return;
+    const want = arg.trim().toLowerCase();
+    if (!want) {
+      this.note(`mode: ${this.state.mode} (change it with /mode plan, /mode build or /mode auto)`);
+    } else if (!MODES.includes(want as Mode)) {
+      this.note(`unknown mode ${sanitize(want)} \u2014 use plan, build or auto`);
+    } else if (want === this.state.mode) {
+      this.note(`already in ${want} mode`);
+    } else {
+      this.setMode(want as Mode); // says "mode: x" once the engine has it
+    }
+  }
+
+  /** `/todos`: the model's list, as the last `todo_write` left it. */
+  async showTodos(): Promise<void> {
+    if (!this.requireSession()) return;
+    const { todos = [] } = await this.o.bridge.request<{ todos?: TodoItem[] }>("code.todos", {});
+    this.set({ todos });
+    this.write(fmtTodos(todos, this.o.width()));
+  }
+
+  /** `/compact`. */
+  compact(): void {
+    if (!this.requireSession() || !this.canSwitch()) return;
+    this.startStream("code.compact", {}, "compacting\u2026");
+  }
+
+  /** `/undo`: show what the last turn changed, then ask. `force` goes over
+   *  files that changed after the turn. */
+  async undo(force: boolean): Promise<void> {
+    if (!this.requireSession() || !this.canSwitch()) return;
+    const width = this.o.width();
+    this.undoBusy = true;
+    try {
+      let plan: UndoPlan;
+      try {
+        plan = normalizePlan(await this.o.bridge.request<UndoPlan>("code.undo", {}));
+      } catch (e) {
+        return this.undoFailed(e);
+      }
+      this.write(fmtUndoPlan(plan, width));
+      if (plan.conflicts.length > 0) this.write(fmtUndoConflicts(plan, width, !force));
+      if (plan.conflicts.length > 0 && !force) return;
+      this.set({ confirm: { question: "Undo these changes? (y/N)", detail: undoSummary(plan, false), force } });
+    } finally {
+      this.undoBusy = false;
+      this.drainQueue();
+    }
+  }
+
+  /** The footer's answer to the open question. */
+  async answerConfirm(yes: boolean): Promise<void> {
+    const c = this.state.confirm;
+    if (!c) return;
+    if (!yes) {
+      this.set({ confirm: null });
+      this.note("nothing was undone");
+      this.drainQueue();
+      return;
+    }
+    this.undoBusy = true;
+    this.set({ confirm: null });
+    try {
+      const plan = normalizePlan(await this.o.bridge.request<UndoPlan>("code.undo", c.force ? { confirm: true, force: true } : { confirm: true }));
+      if (plan.applied) this.note(`undone: ${undoSummary(plan, true)}`);
+      else if (plan.conflicts.length > 0) this.write(fmtUndoConflicts(plan, this.o.width()));
+      else this.note("nothing was undone");
+    } catch (e) {
+      this.undoFailed(e);
+    } finally {
+      this.undoBusy = false;
+      this.drainQueue();
+    }
+  }
+
+  private undoFailed(e: unknown): void {
+    const msg = errText(e);
+    if (/^nothing to undo/.test(msg)) this.note("nothing to undo");
+    else this.error(msg);
+  }
+
+  /** `/clear`: a new session on the same model, mode and opt-ins. */
+  async clear(): Promise<void> {
+    if (!this.requireSession() || !this.canSwitch()) return;
+    await this.replaceSession(() => this.startSession(this.state.model, false, { mode: this.state.mode, divider: "clear" }));
+  }
+
+  /** `/model [name]`: a new session on another model (the old one stays
+   *  resumable). Without a name: a picker of installed and cloud models. */
+  async switchModel(name: string): Promise<void> {
+    if (!this.canSwitch()) return;
+    if (name) {
+      await this.replaceSession(() => this.startSession(name, true, { mode: this.state.mode, divider: "model" }));
+      return;
+    }
+    this.set({ activity: { label: "loading models\u2026", since: this.now() } });
+    try {
+      this.openPicker({ kind: "model", title: "Choose a model", items: await this.modelChoices() });
+    } finally {
+      this.set({ activity: null });
+    }
+  }
+
+  /** Installed models first, then cloud ones that are not installed yet. If
+   *  the cloud list cannot be had, the installed ones are still offered. */
+  private async modelChoices(): Promise<PickerItem[]> {
+    const { models = [] } = await this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {});
+    const items: PickerItem[] = models.map((m) => ({ id: String(m.name), label: String(m.name) }));
+    try {
+      const { models: cloud = [] } = await this.o.bridge.request<{ models?: { name: string; status?: string; installed?: boolean }[] }>("cloud.models", {});
+      const have = new Set(items.map((i) => i.id));
+      for (const m of cloud) {
+        if (m.installed || have.has(m.name) || m.status === "retired" || m.status === "missing") continue;
+        items.push({ id: String(m.name), label: `${m.name} (cloud${m.status === "free" || m.status === "paid" ? `, ${m.status}` : ""})` });
+      }
+    } catch {
+      this.note("could not load the cloud list \u2014 showing installed models");
+    }
+    return items;
+  }
+
+  /** `/sessions`, `/resume`: pick one of this folder's earlier sessions. */
+  async openSessions(): Promise<void> {
+    if (!this.canSwitch()) return;
+    const { sessions = [] } = await this.o.bridge.request<{ sessions?: any[] }>("code.sessions", { cwd: this.o.cwd ?? process.cwd() });
+    const others = sessions.filter((s) => String(s.id) !== this.state.sessionId);
+    if (others.length === 0) {
+      this.note("no earlier session in this folder");
+      return;
+    }
+    this.openPicker({
+      kind: "session",
+      title: "Resume a session",
+      items: others.map((s) => ({ id: String(s.id), label: sessionLabel(s) })),
+    });
+  }
+
+  /** `/resume <id>`. */
+  async resumeSession(id: string): Promise<void> {
+    if (!this.canSwitch()) return;
+    await this.replaceSession(() => this.resume(id));
   }
 
   exit(): void {
@@ -617,6 +865,19 @@ export class Controller {
     }
     this.o.onExit?.();
   }
+}
+
+const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
+
+function normalizePlan(p: Partial<UndoPlan> | null | undefined): UndoPlan {
+  return {
+    restore: list(p?.restore),
+    delete: list(p?.delete),
+    conflicts: list(p?.conflicts),
+    shell_not_reverted: list(p?.shell_not_reverted),
+    skipped: list(p?.skipped),
+    applied: p?.applied === true,
+  };
 }
 
 function errText(e: unknown): string {

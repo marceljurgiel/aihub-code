@@ -3,6 +3,7 @@ import { testRender } from "@opentui/react/test-utils";
 import type { ReactNode } from "react";
 import type { Args } from "../args";
 import { memorySink } from "../scrollback";
+import { commandTable } from "../commands";
 import { Controller } from "../session/controller";
 import { MockBridge } from "../session/mock-bridge";
 import { Footer } from "./Footer";
@@ -83,6 +84,7 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
     width: () => o.width ?? 80,
     cwd: "/home/alex/proj",
     home: "/home/alex",
+    commands: commandTable(),
     onExit: () => exits.push("exit"),
   });
   if (o.start !== false) await c.start({ ...ARGS, ...(typeof o.start === "object" ? o.start : {}) });

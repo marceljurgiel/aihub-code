@@ -48,6 +48,16 @@ export interface CompactionEvent {
   kept_turns?: number;
 }
 
+/** `code.undo`'s answer: what undoing the last turn would do (or did). */
+export interface UndoPlan {
+  restore: string[];
+  delete: string[];
+  conflicts: string[];
+  shell_not_reverted: string[];
+  skipped: string[];
+  applied: boolean;
+}
+
 /** What the header line shows (from `code.start`'s answer and the app's own state). */
 export interface HeaderInfo {
   version: string;

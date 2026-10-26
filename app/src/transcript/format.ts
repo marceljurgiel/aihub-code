@@ -9,7 +9,7 @@ import { G } from "../glyphs";
 import type { Line, Span } from "../scrollback";
 import { palette } from "../theme";
 import { lineWidth, sanitize, stripCR, truncate, truncateStart, wrapSpans, displayWidth } from "../width";
-import type { CompactionEvent, DiffEvent, HeaderInfo, TodoItem, ToolCallEvent, ToolResultEvent } from "./events";
+import type { CompactionEvent, DiffEvent, HeaderInfo, TodoItem, ToolCallEvent, ToolResultEvent, UndoPlan } from "./events";
 
 const FIRST = "  "; // result rows hang under the call line:
 const ELBOW = () => `${FIRST}${G.elbow} `; //   "  ⎿ " first row,
@@ -220,6 +220,57 @@ export function fmtError(msg: string, width: number): Line[] {
 export function fmtNote(text: string, width = Infinity): Line[] {
   return linesOf(text)
     .flatMap((l) => (Number.isFinite(width) ? wrapSpans([dim(l)], width) : [[dim(l)]]));
+}
+
+/** `── new session ──────`: a dim rule with a label, one cell short of the width. */
+export function fmtDivider(text: string, width: number): Line[] {
+  const label = ` ${truncate(oneLine(text), Math.max(1, width - 8))} `;
+  const tail = Math.max(2, width - 1 - 2 - displayWidth(label));
+  return [[dim(`${G.h}${G.h}${label}${G.h.repeat(tail)}`)]];
+}
+
+const fileCount = (n: number) => `${n} file${n === 1 ? "" : "s"}`;
+const MAX_UNDO_FILES = 12;
+const MAX_NAMED = 5;
+
+/** What `/undo` would change: restore, delete, and what it cannot do. */
+export function fmtUndoPlan(plan: UndoPlan, width: number): Line[] {
+  const rows: [string, string][] = [
+    ...plan.restore.map((f): [string, string] => ["restore", f]),
+    ...plan.delete.map((f): [string, string] => ["delete", f]),
+  ];
+  const out: Line[] = [[{ text: rows.length === 0 ? "the last turn changed no files" : `the last turn changed ${fileCount(rows.length)}:` }]];
+  for (const [verb, file] of rows.slice(0, MAX_UNDO_FILES)) {
+    const head = `  ${verb.padEnd(7)}  `;
+    out.push([dim(head), { text: truncateStart(oneLine(file), Math.max(1, width - displayWidth(head))) }]);
+  }
+  if (rows.length > MAX_UNDO_FILES) out.push([dim(`  ${G.ellipsis} ${rows.length - MAX_UNDO_FILES} more`)]);
+  return [...out, ...named("shell commands are not undone", plan.shell_not_reverted, width), ...named("can't be put back safely", plan.skipped, width)];
+}
+
+/** The files that changed after the turn; `hint` adds the way to override. */
+export function fmtUndoConflicts(plan: UndoPlan, width: number, hint = true): Line[] {
+  return [
+    ...named("these changed after the turn", plan.conflicts, width),
+    ...(hint ? fmtNote("/undo force undoes them anyway (your newer changes are lost)", width) : []),
+  ];
+}
+
+function named(label: string, items: string[], width: number): Line[] {
+  if (items.length === 0) return [];
+  const shown = items.slice(0, MAX_NAMED).map(oneLine).join(", ");
+  const more = items.length > MAX_NAMED ? ` and ${items.length - MAX_NAMED} more` : "";
+  return wrapSpans([{ text: `${label}: ${shown}${more}` }], width);
+}
+
+/** `restore 1 file, delete 2 files` (before) or `restored 1 file, deleted 2 files` (after). */
+export function undoSummary(plan: UndoPlan, done: boolean): string {
+  const parts = [
+    plan.restore.length ? `${done ? "restored" : "restore"} ${fileCount(plan.restore.length)}` : "",
+    plan.delete.length ? `${done ? "deleted" : "delete"} ${fileCount(plan.delete.length)}` : "",
+  ].filter(Boolean);
+  if (parts.length) return parts.join(", ");
+  return done ? "the last turn is out of the history" : "no file changes";
 }
 
 function homeRelative(root: string, home: string): string {

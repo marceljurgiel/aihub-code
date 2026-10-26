@@ -17,6 +17,7 @@ import type { Controller } from "../session/controller";
 import { useController } from "../session/useController";
 import { sanitize } from "../width";
 import { ActivityLine } from "./ActivityLine";
+import { CONFIRM_ROWS, ConfirmPrompt } from "./ConfirmPrompt";
 import { PermissionPrompt, permissionLayout } from "./PermissionPrompt";
 import { Picker, pickerInnerRows } from "./Picker";
 import { MAX_INPUT_ROWS, PromptBox } from "./PromptBox";
@@ -46,6 +47,7 @@ const HISTORY_MAX = 200;
 const HINTS = {
   permission: "↑↓ choose · enter confirm · esc no",
   note: "enter send · esc back",
+  confirm: "y yes · n no · esc no",
   picker: "↑↓ choose · enter select · esc cancel",
 };
 
@@ -71,7 +73,8 @@ export function Footer(props: FooterProps) {
 
   const asking = st.phase === "permission" && st.permission !== null;
   const picking = st.picker !== null;
-  const prompting = !asking && !picking;
+  const confirming = st.confirm !== null && !asking && !picking;
+  const prompting = !asking && !picking && !confirming;
   const running = st.phase === "running" || st.phase === "permission";
   const matches = prompting ? slashMatches(typed, commands) : [];
   const hiNow = Math.min(hi, Math.max(0, matches.length - 1));
@@ -250,13 +253,19 @@ export function Footer(props: FooterProps) {
 
   const suggestRows = Math.min(MAX_SUGGESTIONS, matches.length);
   const permLayout = asking ? permissionLayout(st.permission!, Math.max(1, width - 4), 0, false) : null;
-  const boxRows = permLayout ? permLayout.rows + 2 : picking ? pickerInnerRows(st.picker!.items.length) + 2 : rows + 2;
+  const boxRows = permLayout
+    ? permLayout.rows + 2
+    : picking
+      ? pickerInnerRows(st.picker!.items.length) + 2
+      : confirming
+        ? CONFIRM_ROWS + 2
+        : rows + 2;
   const height = 1 + boxRows + suggestRows + 1;
   useEffect(() => {
     onHeight?.(height);
   }, [height]);
 
-  const hint = armed && prompting ? { text: "Press Ctrl+C again to exit", warn: true } : asking ? { text: noting ? HINTS.note : HINTS.permission } : picking ? { text: HINTS.picker } : null;
+  const hint = armed && prompting ? { text: "Press Ctrl+C again to exit", warn: true } : asking ? { text: noting ? HINTS.note : HINTS.permission } : picking ? { text: HINTS.picker } : confirming ? { text: HINTS.confirm } : null;
   const status: StatusInput = {
     mode: st.mode,
     model: sanitize(st.model),
@@ -267,8 +276,8 @@ export function Footer(props: FooterProps) {
 
   return (
     <box flexDirection="column" width={width} height={height} flexShrink={0}>
-      {st.activity && !asking && !picking ? (
-        <ActivityLine activity={st.activity} now={now()} width={width} interruptible={!interrupted} />
+      {st.activity && !asking && !picking && !confirming ? (
+        <ActivityLine activity={st.activity} now={now()} width={width} interruptible={running && !interrupted} />
       ) : (
         <box height={1} flexShrink={0} />
       )}
@@ -285,6 +294,8 @@ export function Footer(props: FooterProps) {
         />
       ) : picking ? (
         <Picker picker={st.picker!} width={width} now={now} guardMs={guardMs} onPick={(id) => void controller.pick(id)} />
+      ) : confirming ? (
+        <ConfirmPrompt confirm={st.confirm!} width={width} now={now} guardMs={guardMs} onAnswer={(yes) => void controller.answerConfirm(yes)} />
       ) : (
         <PromptBox
           width={width}
