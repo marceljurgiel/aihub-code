@@ -325,13 +325,55 @@ def _stream_code_compact(req_id, p) -> None:
 
 
 
-def _delegate(name: str) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
-    """A handler served by AIhub's own bridge (same ~/.aihub, same answer).
-    Imported on first use: aihub.bridge takes over sys.stdout when imported."""
-    def handler(p):
-        from aihub import bridge as aihub_bridge
-        return aihub_bridge._ONESHOT[name](p)
-    return handler
+_aihub_mod = None
+_aihub_lock = threading.Lock()
+
+# AIhub methods aihub-code does not serve: the project folder is the working
+# directory, so a front-end has no use for changing the engine's.
+_DENY = {"workdir.set": "workdir.set: not available in aihub-code (start it in the folder you want)"}
+
+_delegated: set = set()     # request ids of the running delegated (AIhub) streams
+
+
+def _aihub():
+    """AIhub's own bridge module, imported on first use: importing it takes
+    over sys.stdout. Its _emit/_done/_error look `_send` up as a module global
+    at call time, so pointing it at ours puts its events on our protocol
+    channel. Re-pointed on every call: cheap, and always the current one."""
+    global _aihub_mod
+    with _aihub_lock:
+        first = _aihub_mod is None
+        if first:
+            from aihub import bridge as mod
+            _aihub_mod = mod
+        _aihub_mod._send = _send
+        if first:
+            # AIhub's tools run in the folder aihub-code was started in (a
+            # code session, if one is already up, has set its project root).
+            from aihub.tools import workdir
+            if not workdir._session_dir:
+                try:
+                    workdir.set_session_dir(os.getcwd())
+                except OSError:
+                    log.warning("could not set the working directory", exc_info=True)
+        return _aihub_mod
+
+
+def _handlers() -> set:
+    """Every method this bridge answers."""
+    mod = _aihub()
+    return set(_ONESHOT) | set(_STREAMING) | ((set(mod._ONESHOT) | set(mod._STREAMING)) - set(_DENY))
+
+
+def _h_code_options(p):
+    """MCP servers and knowledge bases for this session, from the next turn."""
+    kb = p.get("knowledge")
+    if kb is not None and (not isinstance(kb, list) or not all(isinstance(x, str) for x in kb)):
+        raise _CodeError("knowledge must be a list of names")
+    mcp = p.get("mcp")
+    with _claim_code():
+        s = _code_session()
+        return s.set_options(mcp if isinstance(mcp, bool) else None, kb)
 
 
 def _h_ping(p):
@@ -340,9 +382,6 @@ def _h_ping(p):
 
 _ONESHOT: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "ping": _h_ping,
-    "config.get": _delegate("config.get"),
-    "models.installed": _delegate("models.installed"),
-    "cloud.models": _delegate("cloud.models"),
     "code.start": _h_code_start,
     "code.resume": _h_code_resume,
     "code.sessions": _h_code_sessions,
@@ -352,6 +391,7 @@ _ONESHOT: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "code.rules.list": _h_code_rules_list,
     "code.rules.add": _h_code_rules_add,
     "code.rules.remove": _h_code_rules_remove,
+    "code.options": _h_code_options,
 }
 
 
@@ -400,18 +440,69 @@ def _turn_registry(req_id):
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
+def _run_delegated(req_id, method, params) -> bool:
+    """Serve `method` from AIhub's engine; False when it has no such method."""
+    if method in _DENY:
+        raise _CodeError(_DENY[method])
+    mod = _aihub()
+    if method in mod._STREAMING:
+        with _reg_lock:
+            _delegated.add(req_id)
+        try:
+            mod._STREAMING[method](req_id, params)
+        finally:
+            with _reg_lock:
+                _delegated.discard(req_id)
+        return True
+    if method in mod._ONESHOT:
+        _done(req_id, mod._ONESHOT[method](params))
+        return True
+    return False
+
+
 def _run(req_id, method, params) -> None:
     try:
         if method in _STREAMING:
             _STREAMING[method](req_id, params)
         elif method in _ONESHOT:
             _done(req_id, _ONESHOT[method](params))
-        else:
+        elif not _run_delegated(req_id, method, params):
             _error(req_id, f"unknown method: {method}")
     except _CodeError as exc:
         _error(req_id, str(exc))
     except Exception as exc:  # never let a worker crash take down the bridge
         _error(req_id, f"{method}: {exc}")
+
+
+def _control_delegated(method, params) -> None:
+    """chat.cancel / chat.permission for an AIhub stream: the same puts and
+    sets as AIhub's own _dispatch (v1.5.0)."""
+    mod = _aihub()
+    rid = params.get("request_id")
+    with mod._reg_lock:
+        ev = mod._cancel_events.get(rid)
+        q = mod._perm_queues.get(rid)
+    if method == "chat.permission":
+        if q is not None:
+            q.put(params.get("allow") is True)      # only a JSON true is consent
+        return
+    if ev is not None:
+        ev.set()
+    if q is not None:   # unblock a pending permission wait as a denial
+        q.put(False)
+
+
+def _cancel_delegated() -> None:
+    """Shutdown: stop the AIhub streams still running."""
+    if _aihub_mod is None:
+        return
+    with _reg_lock:
+        ids = list(_delegated)
+    with _aihub_mod._reg_lock:
+        events = [_aihub_mod._cancel_events.get(i) for i in ids]
+    for ev in events:
+        if ev is not None:
+            ev.set()
 
 
 def _dispatch(line: str) -> None:
@@ -424,6 +515,12 @@ def _dispatch(line: str) -> None:
     params = msg.get("params") or {}
 
     # Control messages target an in-flight streaming request.
+    if method in ("chat.permission", "chat.cancel"):
+        with _reg_lock:
+            theirs = params.get("request_id") in _delegated
+        if theirs:
+            _control_delegated(method, params)
+            return
     if method == "chat.permission":
         rid = params.get("request_id")
         with _reg_lock:
@@ -509,6 +606,7 @@ def main() -> None:
     finally:
         _closing = True
         _kill_code_shells()              # running aihub-code commands too
+        _cancel_delegated()              # and AIhub's downloads, indexing, chats
         from aihub.mcp_client import shutdown
         shutdown()                       # MCP server subprocesses go with us
 

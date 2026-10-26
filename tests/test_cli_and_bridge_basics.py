@@ -29,13 +29,12 @@ def test_bridge_ping_is_its_own(monkeypatch):
 
 
 def test_bridge_serves_aihubs_handlers_for_config_and_models(monkeypatch):
-    fake = types.SimpleNamespace(_ONESHOT={
+    fake = types.SimpleNamespace(_STREAMING={}, _ONESHOT={
         "config.get": lambda p: {"cfg": 1},
         "models.installed": lambda p: {"models": []},
         "cloud.models": lambda p: {"models": ["m:cloud"]},
     })
-    monkeypatch.setitem(sys.modules, "aihub.bridge", fake)
-    monkeypatch.setattr("aihub.bridge", fake, raising=False)
+    monkeypatch.setattr(bridge, "_aihub_mod", fake)
     sent = []
     monkeypatch.setattr(bridge, "_send", sent.append)
     for i, m in enumerate(("config.get", "models.installed", "cloud.models")):
@@ -46,8 +45,8 @@ def test_bridge_serves_aihubs_handlers_for_config_and_models(monkeypatch):
 def test_bridge_unknown_method_is_an_error(monkeypatch):
     sent = []
     monkeypatch.setattr(bridge, "_send", sent.append)
-    bridge._run(7, "chat.turn", {})        # AIhub's chat is not served here
-    assert sent == [{"id": 7, "error": "unknown method: chat.turn"}]
+    bridge._run(7, "no.such.method", {})
+    assert sent == [{"id": 7, "error": "unknown method: no.such.method"}]
 
 
 def test_cli_makes_stdout_and_stderr_utf8(monkeypatch):

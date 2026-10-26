@@ -128,6 +128,19 @@ class CodeSession:
     turn_ids: List[str] = field(default_factory=list)
     title: str = ""
 
+    def set_options(self, mcp: Optional[bool] = None,
+                    knowledge: Optional[List[str]] = None) -> Dict[str, Any]:
+        """MCP on/off (every enabled server) and the knowledge bases to search,
+        from the next turn. Unknown base names are dropped. None: unchanged."""
+        if mcp is not None:
+            from aihub import mcp_client
+            self.mcp = _mcp_entries(list(mcp_client.enabled_servers())) if mcp else []
+        if knowledge is not None:
+            from aihub import knowledge as kb
+            known = set(kb.names())
+            self.knowledge = [n for n in dict.fromkeys(knowledge) if n in known]
+        return {"mcp": bool(self.mcp), "knowledge": list(self.knowledge)}
+
     # -- creating -----------------------------------------------------------
 
     @classmethod
