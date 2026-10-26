@@ -178,7 +178,9 @@ export function fmtDiff(diff: DiffEvent, width: number, max = 12): Line[] {
   const hasHeader = raw[0]?.startsWith("--- ") && raw[1]?.startsWith("+++ ");
   const body = hasHeader ? raw.slice(2) : raw;
   const changed = body.filter((l) => l.startsWith("+") || l.startsWith("-"));
+  const label: Span[][] = diff.label ? [[dim(truncate(oneLine(diff.label), room))]] : [];
   if (changed.length === 0) {
+    if (label.length) return prefixed(label);
     if (diff.error) return prefixed([[red(truncate(firstLine(diff.error), room))]]);
     const summary = firstLine(diff.text);
     // No hunks, but text: the engine's "binary or large file" summary.
@@ -186,10 +188,11 @@ export function fmtDiff(diff: DiffEvent, width: number, max = 12): Line[] {
     return prefixed([[dim("no changes")]]);
   }
   const total = Math.max(changed.length, (diff.added ?? 0) + (diff.removed ?? 0));
-  const shown = changed.slice(0, max);
-  const rows: Span[][] = shown.map((l) => [
-    { text: truncate(l, room), fg: l.startsWith("+") ? palette.green : palette.red },
-  ]);
+  const shown = changed.slice(0, Math.max(1, max - label.length));
+  const rows: Span[][] = [
+    ...label,
+    ...shown.map((l) => [{ text: truncate(l, room), fg: l.startsWith("+") ? palette.green : palette.red }]),
+  ];
   if (total > shown.length) rows.push([dim(`${G.ellipsis} +${total - shown.length} lines`)]);
   return prefixed(rows);
 }

@@ -399,3 +399,16 @@ describe("shell [exit N] at narrow widths", () => {
   });
 });
 
+
+describe("fmtDiff label", () => {
+  test("a label is the first, dim row; the rows follow; the count still fits max", () => {
+    const d: DiffEvent = { path: "n.md", text: "--- a/n.md\n+++ b/n.md\n+a\n+b\n+c", added: 3, removed: 0, created: false, label: "new content (the whole file)" };
+    const lines = fmtDiff(d, 80, 3);
+    expect(t(lines)).toEqual([`  ${G.elbow} new content (the whole file)`, "    +a", "    +b", `    ${G.ellipsis} +1 lines`]);
+    expect(lines[0]!.at(-1)!.dim).toBe(true);
+  });
+  test("a label with no rows replaces 'no changes'", () => {
+    const d: DiffEvent = { path: "e", text: "--- a/e\n+++ b/e", added: 0, removed: 0, created: false, label: "new content: an empty file" };
+    expect(t(fmtDiff(d, 80))).toEqual([`  ${G.elbow} new content: an empty file`]);
+  });
+});

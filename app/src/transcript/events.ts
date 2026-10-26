@@ -33,6 +33,9 @@ export interface DiffEvent {
   created: boolean;
   truncated?: boolean;
   error?: string;
+  /** A dim first row saying what the rows are (an AIhub write_file: the new
+   *  content, not a diff of the file on disk). */
+  label?: string;
 }
 
 export interface TodoItem {

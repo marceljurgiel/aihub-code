@@ -3,7 +3,9 @@ import type { Args } from "../args";
 import { commandTable } from "../commands";
 import { memorySink } from "../scrollback";
 import { Controller } from "./controller";
-import { kindLabel } from "./kinds";
+import { fmtDiff } from "../transcript/format";
+import { lineText } from "../width";
+import { HUB_DIFF_ROWS, hubDiff, kindLabel } from "./kinds";
 import { MockBridge } from "./mock-bridge";
 
 const INFO = {
@@ -495,5 +497,62 @@ describe("kindLabel (the status line's first word)", () => {
     expect(kindLabel({ type: "code" }, "plan")).toBe("plan");
     expect(kindLabel({ type: "chat" }, "build")).toBe("chat");
     expect(kindLabel({ type: "agent", name: "reviewer", submode: "plan" }, "auto")).toBe("agent reviewer · plan");
+  });
+});
+
+describe("hubDiff (what an AIhub turn's edit would change)", () => {
+  const body = (text: string) => text.split("\n").slice(2);
+  const shown = (d: ReturnType<typeof hubDiff>) => fmtDiff(d!, 100).map(lineText);
+
+  test("a multi-MB content keeps only the first rows, with the true count", () => {
+    const content = Array.from({ length: 100_000 }, (_, i) => `line ${i + 1}`).join("\n");
+    const d = hubDiff("write_file", { path: "big.txt", content })!;
+    expect(d.added).toBe(100_000);
+    expect(body(d.text)).toHaveLength(HUB_DIFF_ROWS);
+    expect(body(d.text)[0]).toBe("+line 1");
+    expect(d.text.length).toBeLessThan(10_000);
+    expect(shown(d).at(-1)).toContain(`+${100_000 - 11} lines`);
+  });
+
+  test("an edit's old and new text share the cap; both totals stay true", () => {
+    const lines = (p: string) => Array.from({ length: 300 }, (_, i) => `${p}${i}`).join("\n");
+    const d = hubDiff("edit_file", { path: "a.py", old: lines("o"), new: lines("n") })!;
+    expect(d.removed).toBe(300);
+    expect(d.added).toBe(300);
+    expect(body(d.text)).toHaveLength(HUB_DIFF_ROWS);
+  });
+
+  test("content ending in a newline has no blank + row and no extra count", () => {
+    const d = hubDiff("write_file", { path: "n.txt", content: "a\nb\n" })!;
+    expect(d.added).toBe(2);
+    expect(body(d.text)).toEqual(["+a", "+b"]);
+    const e = hubDiff("edit_file", { path: "n.txt", old: "x\n", new: "y\n" })!;
+    expect([e.removed, e.added]).toEqual([1, 1]);
+    expect(body(e.text)).toEqual(["-x", "+y"]);
+  });
+
+  test("CRLF line ends are dropped", () => {
+    const d = hubDiff("write_file", { path: "w.txt", content: "a␍\nb␍\n" })!;
+    expect(body(d.text)).toEqual(["+a", "+b"]);
+  });
+
+  test("an empty file says so instead of 'no changes'", () => {
+    const d = hubDiff("write_file", { path: "empty.txt", content: "" })!;
+    expect(d.added).toBe(0);
+    expect(shown(d).join("\n")).toContain("new content: an empty file");
+    expect(shown(d).join("\n")).not.toContain("no changes");
+  });
+
+  test("write_file is labelled as new content, not drawn as a diff of the file on disk", () => {
+    const d = hubDiff("write_file", { path: "notes.md", content: "x" })!;
+    expect(d.label).toBe("new content (the whole file)");
+    expect(shown(d)[0]).toContain("new content (the whole file)");
+    expect(shown(d)[1]).toContain("+x");
+    // An edit is a real change of the file: no label.
+    expect(hubDiff("edit_file", { path: "a.py", old: "a", new: "b" })!.label).toBeUndefined();
+  });
+
+  test("other tools have no diff", () => {
+    expect(hubDiff("read_file", { path: "a" })).toBeNull();
   });
 });

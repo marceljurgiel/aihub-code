@@ -41,24 +41,51 @@ export interface AgentCheck {
   agent?: AgentInfo;
 }
 
+/** The most rows of an AIhub edit kept for the prompt (it shows a dozen):
+ *  a multi-MB file is never split whole into state. */
+export const HUB_DIFF_ROWS = 200;
+
+/** The first `max` lines of `text` and how many there are in all, without
+ *  splitting the whole of it. A final newline ends the last line (it starts
+ *  no new one); "" has no lines. */
+function headLines(text: string, max: number): { rows: string[]; total: number } {
+  const rows: string[] = [];
+  if (text === "") return { rows, total: 0 };
+  const end = text.endsWith("\n") ? text.length - 1 : text.length;
+  let total = 0;
+  let pos = 0;
+  while (pos <= end) {
+    let nl = text.indexOf("\n", pos);
+    if (nl === -1 || nl > end) nl = end;
+    if (rows.length < max) rows.push(text.slice(pos, nl));
+    total++;
+    pos = nl + 1;
+  }
+  return { rows, total };
+}
+
 /** What an AIhub turn's edit would change, as a diff for the prompt: AIhub
  *  shows the whole change before it is approved, and its permission_request
  *  carries only the tool's arguments (write_file {path, content}, edit_file
- *  {path, old, new}). */
+ *  {path, old, new}). write_file's content is not a diff (the file on disk
+ *  isn't read): its label says it is the new content. */
 export function hubDiff(name: string, args: unknown): DiffEvent | null {
   if (name !== "write_file" && name !== "edit_file") return null;
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === "string" ? v : "");
-  const rows = (v: unknown, sign: string) => (str(v) === "" ? [] : stripCR(str(v)).split("\n").map((l) => sign + sanitize(l)));
   const path = sanitize(str(a.path)).replace(/\n/g, " ");
-  const removed = name === "edit_file" ? rows(a.old, "-") : [];
-  const added = rows(name === "edit_file" ? a.new : a.content, "+");
+  const edit = name === "edit_file";
+  // An edit's old text gets half the rows at most: its new text shows too.
+  const old = edit ? headLines(str(a.old), HUB_DIFF_ROWS / 2) : { rows: [], total: 0 };
+  const added = headLines(str(edit ? a.new : a.content), HUB_DIFF_ROWS - old.rows.length);
+  const row = (sign: string) => (l: string) => sign + sanitize(stripCR(l));
   return {
     path,
-    text: [`--- a/${path}`, `+++ b/${path}`, ...removed, ...added].join("\n"),
-    added: added.length,
-    removed: removed.length,
+    text: [`--- a/${path}`, `+++ b/${path}`, ...old.rows.map(row("-")), ...added.rows.map(row("+"))].join("\n"),
+    added: added.total,
+    removed: old.total,
     created: false,
+    ...(edit ? {} : { label: added.total === 0 ? "new content: an empty file" : "new content (the whole file)" }),
   };
 }
 
