@@ -436,7 +436,8 @@ export class Controller {
   /** A line from the prompt: `/command args` runs at once (never queued);
    *  `//text` is a prompt that begins with a slash; anything else is a prompt. */
   submit(text: string): void {
-    if (text.trim() === "") return;
+    // Leaving: nothing typed during the exit wait may start new work.
+    if (this.exited || text.trim() === "") return;
     const head = text.trimStart();
     if (head.startsWith("//")) text = head.slice(1);
     else if (head.startsWith("/")) {
@@ -473,7 +474,7 @@ export class Controller {
   }
 
   private drainQueue(): void {
-    if (this.turn || this.modeBusy || this.undoBusy || this.listing) return;
+    if (this.exited || this.turn || this.modeBusy || this.undoBusy || this.listing) return;
     if (this.state.confirm || this.state.picker || this.state.phase === "starting") return;
     if (!this.state.sessionId || this.o.bridge.deadError()) return;
     const [next, ...rest] = this.state.queue;
@@ -720,6 +721,7 @@ export class Controller {
   // ── commands, exit ─────────────────────────────────────────────────────────
 
   async runCommand(name: string, arg: string): Promise<void> {
+    if (this.exited) return;
     const fn = this.o.commands?.[name];
     if (!fn) {
       this.note(`unknown command /${sanitize(name)} \u2014 /help lists them`);

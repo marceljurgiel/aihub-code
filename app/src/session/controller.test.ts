@@ -945,6 +945,18 @@ describe("fix round 1", () => {
 
 
 describe("final review fixes", () => {
+  test("after exit nothing new goes out: a prompt or command typed during the exit wait is ignored", async () => {
+    const { c, bridge, turn, exits } = await running();
+    c.exit();
+    c.submit("typed during the wait");
+    c.submit("/todos");
+    turn.finish({ cancelled: true });
+    await settle();
+    expect(bridge.to("code.turn")).toHaveLength(1);
+    expect(bridge.to("code.todos")).toHaveLength(0);
+    expect(exits).toEqual(["exit"]);
+  });
+
   test("cancel during a permission prompt: the phase is running (interrupting…) until done", async () => {
     const { c, turn } = await running();
     turn.emit("permission_request", PERM(1));
