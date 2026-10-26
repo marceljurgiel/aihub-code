@@ -22,6 +22,7 @@ import type { Line, ScrollbackSink } from "../scrollback";
 import type { CompactionEvent, DiffEvent, TodoItem, ToolCallEvent, ToolResultEvent, UndoPlan } from "../transcript/events";
 import {
   fmtCompaction,
+  fmtCommandEcho,
   fmtDiff,
   fmtDivider,
   fmtError,
@@ -178,6 +179,8 @@ export class Controller {
   private modeBusy = false;
   // An undo is in flight (preview or confirm): no turn may start meanwhile.
   private undoBusy = false;
+  // A picker's list is being fetched (/model, /sessions): same.
+  private listing = false;
 
   constructor(private readonly o: ControllerOptions) {}
 
@@ -420,6 +423,7 @@ export class Controller {
     if (head.startsWith("//")) text = head.slice(1);
     else if (head.startsWith("/")) {
       const m = /^\/(\S*)\s*([\s\S]*)$/.exec(head.trimEnd())!;
+      this.write(fmtCommandEcho(head, this.o.width()));
       void this.runCommand(m[1]!.toLowerCase(), m[2]!);
       return;
     }
@@ -444,7 +448,8 @@ export class Controller {
   }
 
   private drainQueue(): void {
-    if (this.turn || this.modeBusy || this.undoBusy || this.state.confirm || this.state.phase === "starting") return;
+    if (this.turn || this.modeBusy || this.undoBusy || this.listing) return;
+    if (this.state.confirm || this.state.picker || this.state.phase === "starting") return;
     if (!this.state.sessionId || this.o.bridge.deadError()) return;
     const [next, ...rest] = this.state.queue;
     if (next === undefined) return;
@@ -699,12 +704,24 @@ export class Controller {
 
   /** For commands that change or replace the session: only between turns. */
   private canSwitch(): boolean {
-    const { phase, confirm } = this.state;
+    const { phase, confirm, picker } = this.state;
     if (phase === "starting") {
       this.note("wait until the session is ready");
       return false;
     }
-    if (this.turn || this.modeBusy || this.undoBusy || confirm || phase === "permission") {
+    if (this.listing) {
+      this.note("still loading the model list");
+      return false;
+    }
+    if (picker) {
+      this.note("choose or cancel the picker first");
+      return false;
+    }
+    if (confirm) {
+      this.note("answer the undo question first");
+      return false;
+    }
+    if (this.turn || this.modeBusy || this.undoBusy || phase === "permission") {
       this.note("wait for the current turn to finish");
       return false;
     }
@@ -808,12 +825,25 @@ export class Controller {
       await this.replaceSession(() => this.startSession(name, true, { mode: this.state.mode, divider: "model" }));
       return;
     }
+    this.listing = true;
     this.set({ activity: { label: "loading models\u2026", since: this.now() } });
     try {
-      this.openPicker({ kind: "model", title: "Choose a model", items: await this.modelChoices() });
+      this.openPickerIfFree({ kind: "model", title: "Choose a model", items: await this.modelChoices() });
     } finally {
+      this.listing = false;
       this.set({ activity: null });
+      this.drainQueue(); // prompts typed meanwhile (the picker, if open, still holds them)
     }
+  }
+
+  /** Nothing can start a turn while a list loads, but if one did, the picker
+   *  would sit over it: drop it and say so. */
+  private openPickerIfFree(picker: PickerState): void {
+    if (this.turn || this.state.phase !== "idle") {
+      this.note("a turn started meanwhile \u2014 try again when it is done");
+      return;
+    }
+    this.openPicker(picker);
   }
 
   /** Installed models first, then cloud ones that are not installed yet. If
@@ -837,22 +867,32 @@ export class Controller {
   /** `/sessions`, `/resume`: pick one of this folder's earlier sessions. */
   async openSessions(): Promise<void> {
     if (!this.canSwitch()) return;
-    const { sessions = [] } = await this.o.bridge.request<{ sessions?: any[] }>("code.sessions", { cwd: this.o.cwd ?? process.cwd() });
-    const others = sessions.filter((s) => String(s.id) !== this.state.sessionId);
-    if (others.length === 0) {
-      this.note("no earlier session in this folder");
-      return;
+    this.listing = true;
+    try {
+      const { sessions = [] } = await this.o.bridge.request<{ sessions?: any[] }>("code.sessions", { cwd: this.o.cwd ?? process.cwd() });
+      const others = sessions.filter((s) => String(s.id) !== this.state.sessionId);
+      if (others.length === 0) {
+        this.note("no earlier session in this folder");
+        return;
+      }
+      this.openPickerIfFree({
+        kind: "session",
+        title: "Resume a session",
+        items: others.map((s) => ({ id: String(s.id), label: sessionLabel(s) })),
+      });
+    } finally {
+      this.listing = false;
+      this.drainQueue();
     }
-    this.openPicker({
-      kind: "session",
-      title: "Resume a session",
-      items: others.map((s) => ({ id: String(s.id), label: sessionLabel(s) })),
-    });
   }
 
   /** `/resume <id>`. */
   async resumeSession(id: string): Promise<void> {
     if (!this.canSwitch()) return;
+    if (id === this.state.sessionId) {
+      this.note("that's the current session");
+      return;
+    }
     await this.replaceSession(() => this.resume(id));
   }
 

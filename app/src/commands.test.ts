@@ -54,7 +54,8 @@ async function started(width = 80) {
     const before = m.sink.lines.length;
     m.c.submit(text);
     await settle();
-    return m.sink.lines.slice(before);
+    // Every slash command is echoed first (see "the echo"): its output follows.
+    return m.sink.lines.slice(before + (text.trimStart().startsWith("/") && !text.trimStart().startsWith("//") ? 1 : 0));
   };
   return { ...m, mark, run };
 }
@@ -128,6 +129,43 @@ describe("routing", () => {
     for (const c of COMMANDS) expect(c.help.length).toBeGreaterThan(5);
     expect(SLASH_COMMANDS.map((c) => c.name)).toEqual(COMMANDS.map((c) => c.name));
     expect(Object.keys(commandTable())).toEqual(COMMANDS.map((c) => c.name));
+  });
+});
+
+describe("the echo", () => {
+  test("a command is echoed as a dim user line, before its output", async () => {
+    const m = await started();
+    m.c.submit("/context");
+    await settle();
+    const i = m.sink.lines.length - 2;
+    expect(m.sink.lines[i]).toBe("> /context");
+    expect(m.sink.lines[i + 1]).toContain("context:");
+    expect(m.sink.styled[i]!.every((sp) => sp.dim)).toBe(true);
+  });
+
+  test("with its argument, trimmed, on one line; unknown commands too", async () => {
+    const m = await started();
+    m.c.submit("  /mode   plan  ");
+    await settle();
+    expect(m.sink.lines.at(-2)).toBe("> /mode plan");
+    m.c.submit("/nope a\nb");
+    await settle();
+    expect(m.sink.lines.at(-2)).toBe("> /nope a b");
+  });
+
+  test("escape codes in the typed text are cleaned", async () => {
+    const m = await started();
+    m.c.submit("/x\u001b[2Jy");
+    await settle();
+    expect(m.sink.lines.join("\n")).not.toContain("\u001b");
+  });
+
+  test("a // prompt is a user prompt, not an echo", async () => {
+    const m = await started();
+    m.c.submit("//hi");
+    await settle();
+    expect(m.sink.lines.at(-1)).toBe("> /hi");
+    expect(m.sink.styled.at(-1)![0]!.dim).toBeFalsy();
   });
 });
 
@@ -728,5 +766,115 @@ describe("/exit and /hub", () => {
     expect(out).toContain("aihub");
     expect(out).toContain("models");
     expect(out).toContain("knowledge");
+  });
+});
+
+describe("holding the session still", () => {
+  /** A request the test releases by hand. */
+  function hold(m: { bridge: MockBridge }, method: string): { release: (v: unknown) => void } {
+    const h = { release: (_: unknown) => {} };
+    const orig = m.bridge.request.bind(m.bridge);
+    m.bridge.request = ((meth: string, params: Record<string, unknown> = {}) =>
+      meth === method ? new Promise<unknown>((r) => (h.release = r)) : orig(meth, params)) as typeof m.bridge.request;
+    return h;
+  }
+
+  test("while /model loads its lists, a typed prompt waits; the picker opens over no turn", async () => {
+    const m = await started();
+    const h = hold(m, "cloud.models");
+    m.c.submit("/model");
+    await settle();
+    m.c.submit("hello");
+    await settle();
+    expect(m.bridge.streams).toEqual([]);
+    expect(m.c.getState().queue).toEqual(["hello"]);
+    h.release({ models: [] });
+    await settle();
+    expect(m.c.getState().phase).toBe("picker");
+    expect(m.bridge.streams).toEqual([]);
+    await m.c.pick(null); // closing the picker lets the prompt go
+    await settle();
+    expect(m.bridge.lastStream.params).toEqual({ text: "hello" });
+  });
+
+  test("a second /model while loading is refused", async () => {
+    const m = await started();
+    const h = hold(m, "cloud.models");
+    m.c.submit("/model");
+    await settle();
+    const before = m.bridge.to("models.installed").length;
+    expect(await m.run("/model")).toEqual(["still loading the model list"]);
+    expect(m.bridge.to("models.installed")).toHaveLength(before);
+    h.release({ models: [] });
+    await settle();
+    expect(m.c.getState().picker!.kind).toBe("model");
+  });
+
+  test("other session commands wait for the list too", async () => {
+    const m = await started();
+    const h = hold(m, "cloud.models");
+    m.c.submit("/model");
+    await settle();
+    expect(await m.run("/clear")).toEqual(["still loading the model list"]);
+    expect(await m.run("/compact")).toEqual(["still loading the model list"]);
+    h.release({ models: [] });
+    await settle();
+  });
+
+  test("a prompt typed while /sessions loads waits as well", async () => {
+    const m = await started();
+    const h = hold(m, "code.sessions");
+    m.c.submit("/sessions");
+    await settle();
+    m.c.submit("hello");
+    await settle();
+    expect(m.bridge.streams).toEqual([]);
+    h.release({ sessions: [{ id: "a", title: "x", turns: 1, updated: "" }] });
+    await settle();
+    expect(m.c.getState().phase).toBe("picker");
+    expect(m.bridge.streams).toEqual([]);
+  });
+
+  test("with a picker open, session commands are refused and the picker stays", async () => {
+    const m = await started();
+    m.bridge.answers["code.sessions"] = { sessions: [{ id: "a", title: "x", turns: 1, updated: "" }] };
+    await m.run("/sessions");
+    const picker = m.c.getState().picker;
+    for (const cmd of ["/compact", "/resume zz", "/clear", "/model", "/sessions", "/undo"]) {
+      expect(await m.run(cmd)).toEqual(["choose or cancel the picker first"]);
+    }
+    expect(m.c.getState().picker).toBe(picker);
+    expect(m.c.getState().phase).toBe("picker");
+    expect(m.bridge.streams).toEqual([]);
+    expect(m.bridge.to("code.resume")).toEqual([]);
+    expect(m.bridge.to("code.undo")).toEqual([]);
+  });
+
+  test("with the undo question open, session commands are refused and the question stays", async () => {
+    const m = await started();
+    m.bridge.answers["code.undo"] = { restore: ["a.py"], delete: [], conflicts: [], shell_not_reverted: [], skipped: [], applied: false };
+    await m.run("/undo");
+    for (const cmd of ["/compact", "/resume zz", "/clear", "/model x"]) expect(await m.run(cmd)).toEqual(["answer the undo question first"]);
+    expect(m.c.getState().confirm).not.toBeNull();
+    expect(m.bridge.streams).toEqual([]);
+  });
+
+  test("a prompt waiting behind a picker goes out when the picker closes", async () => {
+    const m = await started();
+    m.bridge.answers["code.sessions"] = { sessions: [{ id: "a", title: "x", turns: 1, updated: "" }] };
+    await m.run("/sessions");
+    m.c.submit("later");
+    await settle();
+    expect(m.bridge.streams).toEqual([]);
+    await m.c.pick(null);
+    await settle();
+    expect(m.bridge.lastStream.params).toEqual({ text: "later" });
+  });
+
+  test("/resume <id> of the current session says so", async () => {
+    const m = await started();
+    expect(await m.run("/resume s-gemma4:cloud")).toEqual(["that's the current session"]);
+    expect(m.bridge.to("code.resume")).toEqual([]);
+    expect(m.c.getState().phase).toBe("idle");
   });
 });

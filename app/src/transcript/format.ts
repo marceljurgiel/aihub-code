@@ -43,6 +43,12 @@ export function fmtUser(text: string, width: number): Line[] {
   return out;
 }
 
+/** A typed `/command args`, dim, one logical line (the output follows it). */
+export function fmtCommandEcho(text: string, width: number): Line[] {
+  const one = sanitize(stripCR(text)).replace(/\s+/g, " ").trim();
+  return wrapSpans([dim(`> ${one}`)], Math.max(1, width), { indent: "  " });
+}
+
 // ── tool calls ────────────────────────────────────────────────────────────────
 
 const PATH_KEYS: Record<string, string> = {
