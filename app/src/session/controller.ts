@@ -48,6 +48,8 @@ export interface Bridge {
   send(control: { method: string; params?: Record<string, unknown> }): void;
   /** Why the bridge is gone, or null while it lives. */
   deadError(): Error | null;
+  /** Called once if the bridge process dies (never for a close on purpose). */
+  onDead?(fn: (err: Error) => void): void;
 }
 
 export type Phase = "starting" | "idle" | "running" | "permission" | "picker" | "error";
@@ -129,6 +131,9 @@ export interface ControllerOptions {
   onExit?: () => void;
   /** A resumed session's saved messages, for the app to replay into the scrollback. */
   onResume?: (messages: any[]) => void;
+  /** How long exit() waits for an interrupted turn to end (the engine saves
+   *  the session at the turn's end) before it goes anyway. */
+  exitGraceMs?: number;
 }
 
 /** `gemma4:cloud`, `gpt-oss:120b-cloud`: runs on ollama.com. */
@@ -168,7 +173,7 @@ export class Controller {
   private listeners = new Set<() => void>();
   private turn: Turn | null = null;
   private version = "";
-  private startArgs: Pick<Args, "mcp" | "kb"> & { mode: Mode } = { mode: "build", mcp: [], kb: [] };
+  private startArgs: Pick<Args, "mcp" | "kb" | "model"> & { mode: Mode } = { mode: "build", mcp: [], kb: [] };
   private shownNotes = new Set<string>();
   private turnsSent = 0;
   private resumed = false;
@@ -181,8 +186,14 @@ export class Controller {
   private undoBusy = false;
   // A picker's list is being fetched (/model, /sessions): same.
   private listing = false;
+  // Where Esc in a command's picker goes back to, when there is no session to
+  // go back to (after a failed start: "error"). Null for start-up pickers.
+  private pickerBack: Phase | null = null;
 
-  constructor(private readonly o: ControllerOptions) {}
+  constructor(private readonly o: ControllerOptions) {
+    // A bridge that dies between turns is said at once, not at the next Enter.
+    o.bridge.onDead?.((err) => this.bridgeDied(err));
+  }
 
   // ── state ──────────────────────────────────────────────────────────────────
 
@@ -229,7 +240,7 @@ export class Controller {
   // ── start-up ───────────────────────────────────────────────────────────────
 
   async start(args: Args): Promise<void> {
-    this.startArgs = { mode: args.mode ?? "build", mcp: args.mcp, kb: args.kb };
+    this.startArgs = { mode: args.mode ?? "build", mcp: args.mcp, kb: args.kb, model: args.model };
     try {
       this.version = (await this.o.bridge.ready()).version;
     } catch (e) {
@@ -275,9 +286,15 @@ export class Controller {
     const picker = this.state.picker;
     if (!picker) return;
     const live = this.state.sessionId !== "";
+    const back = this.pickerBack;
+    this.pickerBack = null;
     if (id === null && live) {
       this.set({ picker: null, phase: "idle" });
       this.drainQueue();
+      return;
+    }
+    if (id === null && back !== null) {
+      this.set({ picker: null, phase: back });
       return;
     }
     await this.replaceSession(async () => {
@@ -286,7 +303,7 @@ export class Controller {
         // It came from the server's own list.
         await this.startSession(id, false, live ? { mode: this.state.mode, divider: "model" } : {});
       } else if (id === null) {
-        const model = (await this.o.bridge.request<Record<string, unknown>>("config.get", {})).default_chat_model;
+        const model = this.startArgs.model || (await this.o.bridge.request<Record<string, unknown>>("config.get", {})).default_chat_model;
         if (!model) return await this.pickModel();
         await this.startSession(String(model), true);
       } else {
@@ -338,7 +355,8 @@ export class Controller {
     }
   }
 
-  private openPicker(picker: PickerState): void {
+  private openPicker(picker: PickerState, back: Phase | null = null): void {
+    this.pickerBack = back;
     this.set({ phase: "picker", picker });
   }
 
@@ -445,6 +463,13 @@ export class Controller {
   private bridgeGone(dead: Error): void {
     this.error(`the bridge is gone — restart aihub-code (${dead.message})`);
     this.set({ phase: "error", error: dead.message, activity: null, permission: null });
+  }
+
+  /** The client's death hook. A turn reports it itself (its stream fails),
+   *  and so does a start-up (failStart): only a quiet bridge needs the line. */
+  private bridgeDied(err: Error): void {
+    if (this.exited || this.turn || this.state.phase === "error" || this.state.phase === "starting") return;
+    this.bridgeGone(err);
   }
 
   private drainQueue(): void {
@@ -630,7 +655,11 @@ export class Controller {
     turn.cancelled = true;
     turn.handle?.cancel();
     this.note(`  ${G.elbow} interrupted`);
-    this.set({ activity: { label: "interrupting…", since: this.now() }, permission: null });
+    // What was typed behind the turn was written for a plan the user just
+    // stopped: it does not go out on its own (Up brings it back).
+    const n = this.state.queue.length;
+    if (n > 0) this.note(`dropped ${n} queued prompt${n === 1 ? "" : "s"}`);
+    this.set({ phase: "running", activity: { label: "interrupting…", since: this.now() }, permission: null, queue: [] });
   }
 
   // ── mode ───────────────────────────────────────────────────────────────────
@@ -641,8 +670,18 @@ export class Controller {
 
   setMode(mode: Mode): void {
     if (!this.state.sessionId || mode === this.state.mode) return;
-    if (this.turn) {
-      this.note("mode can change when the turn is done");
+    // code.mode would race code.start / code.undo for the engine's session.
+    const wait = this.turn
+      ? "mode can change when the turn is done"
+      : this.state.phase === "starting"
+        ? "mode can change when the session is ready"
+        : this.undoBusy || this.state.confirm
+          ? "mode can change once the undo is done"
+          : this.listing
+            ? "mode can change when the list has loaded"
+            : null;
+    if (wait) {
+      this.note(wait);
       return;
     }
     this.set({ mode });
@@ -691,6 +730,8 @@ export class Controller {
     try {
       await fn(this, arg);
     } catch (e) {
+      // A bridge that died meanwhile has had its red line (bridgeDied).
+      if (this.o.bridge.deadError() && this.state.phase === "error") return;
       this.error(errText(e));
     }
   }
@@ -837,13 +878,16 @@ export class Controller {
   }
 
   /** Nothing can start a turn while a list loads, but if one did, the picker
-   *  would sit over it: drop it and say so. */
+   *  would sit over it: drop it and say so. After a failed start ("error",
+   *  bridge alive) the picker is the way out, and Esc comes back to "error". */
   private openPickerIfFree(picker: PickerState): void {
-    if (this.turn || this.state.phase !== "idle") {
+    const { phase } = this.state;
+    const free = phase === "idle" || (phase === "error" && !this.o.bridge.deadError());
+    if (this.turn || !free) {
       this.note("a turn started meanwhile \u2014 try again when it is done");
       return;
     }
-    this.openPicker(picker);
+    this.openPicker(picker, this.state.sessionId ? null : phase);
   }
 
   /** Installed models first, then cloud ones that are not installed yet. If
@@ -903,13 +947,25 @@ export class Controller {
     return this.state.sessionId && (this.turnsSent > 0 || this.resumed) ? this.state.sessionId : "";
   }
 
+  /** Leave. A running turn is interrupted first, and its end awaited for a
+   *  moment: the engine saves the session then, so --resume has the last
+   *  prompt. A dead bridge rejects at once; a stuck one is not waited for. */
   exit(): void {
     if (this.exited) return;
     this.exited = true;
-    if (this.turn) this.cancel();
-    this.o.onExit?.();
+    const turn = this.turn;
+    if (!turn?.handle) return this.o.onExit?.();
+    this.cancel();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const grace = new Promise<void>((r) => (timer = setTimeout(r, this.o.exitGraceMs ?? 1500)));
+    void Promise.race([turn.handle.done.then(noop, noop), grace]).then(() => {
+      clearTimeout(timer);
+      this.o.onExit?.();
+    });
   }
 }
+
+const noop = (): void => {};
 
 const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
 

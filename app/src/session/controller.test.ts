@@ -22,7 +22,7 @@ const settle = async () => {
   for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
 };
 
-function make(over: Partial<{ width: number; config: Record<string, unknown> }> = {}) {
+function make(over: Partial<{ width: number; config: Record<string, unknown>; exitGraceMs: number }> = {}) {
   const bridge = new MockBridge();
   bridge.answers["config.get"] = over.config ?? { default_chat_model: "gemma4:cloud" };
   bridge.answers["code.start"] = INFO;
@@ -35,12 +35,14 @@ function make(over: Partial<{ width: number; config: Record<string, unknown> }> 
   const c = new Controller({
     bridge,
     sink,
+    commands: { todos: (ctl) => ctl.showTodos() },
     now: () => clock,
     width: () => over.width ?? 80,
     cwd: "/home/alex/proj",
     home: "/home/alex",
     onExit: () => exits.push("exit"),
     onResume: (m) => resumed.push(m),
+    exitGraceMs: over.exitGraceMs,
   });
   return { bridge, sink, c, exits, resumed, tick: (ms: number) => (clock += ms) };
 }
@@ -546,7 +548,7 @@ describe("cancel", () => {
     });
   });
 
-  test("cancel with no turn does nothing; a queued prompt goes out after the cancelled turn's done", async () => {
+  test("cancel with no turn does nothing; a queued prompt is dropped by the cancel, not sent after done", async () => {
     const m = await started();
     m.c.cancel();
     expect(m.bridge.controls).toEqual([]);
@@ -557,7 +559,7 @@ describe("cancel", () => {
     m.c.cancel();
     m.bridge.lastStream.finish({ cancelled: true });
     await settle();
-    expect(m.bridge.to("code.turn").map((x) => x.params.text)).toEqual(["one", "two"]);
+    expect(m.bridge.to("code.turn").map((x) => x.params.text)).toEqual(["one"]);
   });
 });
 
@@ -706,15 +708,36 @@ describe("commands, exit, subscribe", () => {
     expect(sink.styled[0]![0]!.dim).toBe(true);
   });
 
-  test("exit cancels a running turn and calls onExit; the session is then resumable", async () => {
+  test("exit cancels a running turn, waits for its end (the engine saves the session), then calls onExit", async () => {
     const { c, exits, sink, bridge, turn } = await running();
     c.exit();
     expect(bridge.controls).toEqual([{ method: "chat.cancel", params: { request_id: turn.id } }]);
+    expect(exits).toEqual([]);
+    turn.finish({ cancelled: true });
+    await settle();
     // The app prints the resume line itself once the terminal is restored.
     expect(sink.lines.some((l) => l.startsWith("Resume"))).toBe(false);
     expect(c.resumableSessionId()).toBe("s1");
     expect(exits).toEqual(["exit"]);
     c.exit();
+    expect(exits).toEqual(["exit"]);
+  });
+
+  test("exit does not wait for a turn that never ends: onExit after the grace time", async () => {
+    const m = await started({ exitGraceMs: 30 });
+    m.c.submit("fix it");
+    await settle();
+    m.c.exit();
+    expect(m.exits).toEqual([]);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(m.exits).toEqual(["exit"]);
+  });
+
+  test("exit while a turn's bridge is dead goes at once", async () => {
+    const { c, exits, bridge } = await running();
+    bridge.die(new Error("bridge process exited (code 1)"));
+    c.exit();
+    await settle();
     expect(exits).toEqual(["exit"]);
   });
 
@@ -920,3 +943,149 @@ describe("fix round 1", () => {
   });
 });
 
+
+describe("final review fixes", () => {
+  test("cancel during a permission prompt: the phase is running (interrupting…) until done", async () => {
+    const { c, turn } = await running();
+    turn.emit("permission_request", PERM(1));
+    expect(c.getState().phase).toBe("permission");
+    c.cancel();
+    expect(c.getState().phase).toBe("running");
+    expect(c.getState().permission).toBeNull();
+    expect(c.getState().activity?.label).toBe("interrupting…");
+  });
+
+  test("an interrupt drops the queued prompts with a dim note; nothing goes out after done", async () => {
+    const { c, sink, bridge, turn } = await running();
+    c.submit("second");
+    c.submit("third");
+    expect(c.getState().queue).toEqual(["second", "third"]);
+    c.cancel();
+    expect(c.getState().queue).toEqual([]);
+    expect(sink.lines).toContain("dropped 2 queued prompts");
+    expect(sink.styled[sink.lines.indexOf("dropped 2 queued prompts")]![0]!.dim).toBe(true);
+    turn.finish({ cancelled: true });
+    await settle();
+    expect(bridge.to("code.turn")).toHaveLength(1);
+    expect(c.getState().phase).toBe("idle");
+  });
+
+  test("one queued prompt: the note says so in the singular; an empty queue says nothing", async () => {
+    const a = await running();
+    a.c.submit("second");
+    a.c.cancel();
+    expect(a.sink.lines).toContain("dropped 1 queued prompt");
+    const b = await running();
+    b.c.cancel();
+    expect(b.sink.lines.some((l) => l.startsWith("dropped"))).toBe(false);
+  });
+
+  describe("the mode waits while the engine is busy with something else", () => {
+    const pending = () => {
+      let resolve!: (v: unknown) => void;
+      const p = new Promise((r) => (resolve = r));
+      return { p, resolve };
+    };
+    const noModeCall = (m: Awaited<ReturnType<typeof started>>) => {
+      expect(m.bridge.to("code.mode")).toEqual([]);
+      expect(m.c.getState().mode).toBe("build");
+    };
+
+    test("while a new session starts (/clear)", async () => {
+      const m = await started();
+      const gate = pending();
+      m.bridge.answers["code.start"] = () => gate.p;
+      const clearing = m.c.clear();
+      await settle();
+      expect(m.c.getState().phase).toBe("starting");
+      m.c.setMode("plan");
+      noModeCall(m);
+      expect(m.sink.lines.at(-1)).toBe("mode can change when the session is ready");
+      gate.resolve(INFO);
+      await clearing;
+    });
+
+    test("while an undo is being prepared, and while its question is open", async () => {
+      const m = await started();
+      const gate = pending();
+      m.bridge.answers["code.undo"] = () => gate.p;
+      const undoing = m.c.undo(false);
+      await settle();
+      m.c.setMode("plan");
+      noModeCall(m);
+      expect(m.sink.lines.at(-1)).toBe("mode can change once the undo is done");
+      gate.resolve({ restore: ["calc.py"], delete: [], conflicts: [], shell_not_reverted: [], skipped: [], applied: false });
+      await undoing;
+      expect(m.c.getState().confirm).not.toBeNull();
+      m.c.setMode("plan");
+      noModeCall(m);
+      expect(m.sink.lines.at(-1)).toBe("mode can change once the undo is done");
+    });
+
+    test("while a list loads (/model)", async () => {
+      const m = await started();
+      const gate = pending();
+      m.bridge.answers["models.installed"] = () => gate.p;
+      const listing = m.c.switchModel("");
+      await settle();
+      m.c.setMode("plan");
+      noModeCall(m);
+      expect(m.sink.lines.at(-1)).toBe("mode can change when the list has loaded");
+      gate.resolve({ models: [] });
+      await listing;
+    });
+  });
+
+  test("Esc in the --resume picker starts a session on --model, not on the default", async () => {
+    const m = make();
+    m.bridge.answers["code.sessions"] = { sessions: [{ id: "old", updated: "", title: "t", turns: 1 }] };
+    await m.c.start({ ...ARGS, resume: true, model: "llama3.2:3b" });
+    expect(m.c.getState().picker?.kind).toBe("session");
+    await m.c.pick(null);
+    expect(m.bridge.to("code.start")[0]!.params.model).toBe("llama3.2:3b");
+  });
+
+  test("the bridge dying while idle: the red line and phase error at once, not at the next submit", async () => {
+    const { c, sink, bridge } = await started();
+    bridge.die(new Error("bridge process exited (code 1)"));
+    expect(c.getState().phase).toBe("error");
+    expect(sink.lines.at(-1)).toBe(`${G.cross} the bridge is gone — restart aihub-code (bridge process exited (code 1))`);
+    expect(sink.styled.at(-1)![0]!.fg).toBe(palette.red);
+  });
+
+  test("the bridge dying during a turn is reported once (by the turn)", async () => {
+    const { c, sink, bridge } = await running();
+    const from = sink.lines.length;
+    bridge.die(new Error("bridge process exited (code 1)"));
+    await settle();
+    expect(c.getState().phase).toBe("error");
+    expect(sink.lines.slice(from)).toEqual([`${G.cross} bridge process exited (code 1)`]);
+  });
+
+  test("the bridge dying while a command waits on it is reported once", async () => {
+    const m = await started();
+    let reject!: (e: Error) => void;
+    m.bridge.answers["code.todos"] = () => new Promise((_, r) => (reject = r));
+    const cmd = m.c.runCommand("todos", "");
+    await settle();
+    const err = new Error("bridge process exited (code 1)");
+    m.bridge.die(err);
+    reject(err);
+    await cmd;
+    expect(m.sink.lines.filter((l) => l.includes("code 1"))).toHaveLength(1);
+  });
+
+  test("the bridge dying while a session starts is reported once", async () => {
+    const m = make();
+    let reject!: (e: Error) => void;
+    m.bridge.answers["code.start"] = () => new Promise((_, r) => (reject = r));
+    const starting = m.c.start(ARGS);
+    await settle();
+    const err = new Error("bridge process exited (code 1)");
+    m.bridge.die(err);
+    reject(err);
+    await starting;
+    expect(m.sink.lines.filter((l) => l.includes("code 1"))).toHaveLength(1);
+    expect(m.c.getState().phase).toBe("error");
+  });
+});

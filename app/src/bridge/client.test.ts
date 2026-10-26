@@ -165,3 +165,85 @@ for line in sys.stdin:
     expect(() => b.send({ method: "chat.cancel", params: { request_id: 1 } })).not.toThrow();
   });
 });
+
+test("onDead hears a bridge that dies, once, with the error; never a close on purpose", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fake-bridge-"));
+  const file = join(dir, "bridge.py");
+  writeFileSync(file, `import sys, json, os
+print(json.dumps({"id": None, "event": "ready", "data": {"version": "1"}}), flush=True)
+for line in sys.stdin:
+    if json.loads(line)["method"] == "die":
+        os._exit(5)
+`);
+  const heard: string[] = [];
+  await withBridge(["python3", file], async (b) => {
+    b.onDead((e) => heard.push(e.message));
+    await b.ready();
+    b.call("die").catch(() => {});
+    for (let i = 0; i < 50 && heard.length === 0; i++) await Bun.sleep(20);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]).toContain("code 5");
+  });
+  const quiet: string[] = [];
+  await withBridge(fakeBridge(), async (b) => {
+    b.onDead((e) => quiet.push(e.message));
+    await b.ready();
+  }); // withBridge destroys it
+  await Bun.sleep(100);
+  expect(quiet).toEqual([]);
+});
+
+/** A bridge that cleans up after stdin closes, as aihub_code.bridge does
+ *  (it kills the agent's shells): `cleanup` is Python run after EOF, with its
+ *  temp folder in DIR. */
+function closingBridge(cleanup: string): { argv: string[]; dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), "fake-bridge-"));
+  const file = join(dir, "bridge.py");
+  writeFileSync(file, `import sys, json, os, time
+DIR = ${JSON.stringify(dir)}
+open(os.path.join(DIR, "pid"), "w").write(str(os.getpid()))
+print(json.dumps({"id": None, "event": "ready", "data": {"version": "1"}}), flush=True)
+for line in sys.stdin:
+    pass
+${cleanup}
+`);
+  return { argv: ["python3", file], dir };
+}
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("destroy() closes stdin and lets the bridge finish its cleanup (no kill straight away)", async () => {
+  const { argv, dir } = closingBridge(`time.sleep(0.3)\nopen(os.path.join(DIR, "cleaned"), "w").write("yes")`);
+  const marker = join(dir, "cleaned");
+  await withBridge(argv, async (b) => {
+    await b.ready();
+  }); // destroy()
+  for (let i = 0; i < 50; i++) {
+    try {
+      readFileSync(marker, "utf8");
+      break;
+    } catch {
+      await Bun.sleep(40);
+    }
+  }
+  expect(readFileSync(marker, "utf8")).toBe("yes");
+});
+
+test("destroy() kills a bridge that does not exit after the grace time", async () => {
+  const { argv, dir } = closingBridge("time.sleep(60)");
+  let pid = 0;
+  await withBridge(argv, async (b) => {
+    b.exitGraceMs = 150;
+    await b.ready();
+    pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+  });
+  expect(alive(pid)).toBe(true); // still in its grace time
+  for (let i = 0; i < 50 && alive(pid); i++) await Bun.sleep(40);
+  expect(alive(pid)).toBe(false);
+});

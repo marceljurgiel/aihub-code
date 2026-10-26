@@ -28,6 +28,8 @@ export class MockBridge implements Bridge {
   readyError: Error | null = null;
   dead: Error | null = null;
   private nextId = 1;
+  private deathListeners: ((err: Error) => void)[] = [];
+  private open = new Set<MockStream>();
 
   ready(): Promise<{ version: string }> {
     return this.readyError ? Promise.reject(this.readyError) : Promise.resolve({ version: this.version });
@@ -35,6 +37,18 @@ export class MockBridge implements Bridge {
 
   deadError(): Error | null {
     return this.dead;
+  }
+
+  onDead(fn: (err: Error) => void): void {
+    this.deathListeners.push(fn);
+  }
+
+  /** The bridge process dies, as BridgeClient reports it: what is pending
+   *  rejects (seen a microtask later), the death listeners hear it at once. */
+  die(err: Error): void {
+    this.dead = err;
+    for (const s of [...this.open]) s.fail(err);
+    for (const fn of this.deathListeners) fn(err);
   }
 
   request<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -56,14 +70,22 @@ export class MockBridge implements Bridge {
       reject = rej;
     });
     if (this.dead) reject(this.dead);
-    this.streams.push({
+    const s: MockStream = {
       id,
       method,
       params,
       emit: (event, data = {}) => onEvent(event, data),
-      finish: (data = {}) => resolve(data),
-      fail: (err) => reject(err),
-    });
+      finish: (data = {}) => {
+        this.open.delete(s);
+        resolve(data);
+      },
+      fail: (err) => {
+        this.open.delete(s);
+        reject(err);
+      },
+    };
+    this.streams.push(s);
+    if (!this.dead) this.open.add(s);
     return { id, done, cancel: () => this.send({ method: "chat.cancel", params: { request_id: id } }) };
   }
 

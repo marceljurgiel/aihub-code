@@ -48,6 +48,8 @@ export function resolveBridgeCmd(env: Env = process.env): string[] {
 }
 
 /** A running stream: its request id, completion, and a cancel for it. */
+const CLOSED = "the bridge was closed";
+
 export type StreamHandle = { id: number; done: Promise<any>; cancel: () => void };
 
 export class BridgeClient {
@@ -63,6 +65,10 @@ export class BridgeClient {
    *  engine version (it used to answer "?", shown as "core ?" in the footer). */
   private readyInfo: { version: string } | null = null;
   private cmd: string[];
+  private deathListeners: Array<(err: Error) => void> = [];
+  /** How long destroy() lets the bridge clean up after its stdin closes (it
+   *  stops the agent's commands and the MCP servers) before it is killed. */
+  exitGraceMs = 1500;
 
   constructor() {
     this.cmd = resolveBridgeCmd();
@@ -100,6 +106,19 @@ export class BridgeClient {
     for (const p of this.pending.values()) p.reject(err);
     this.pending.clear();
     for (const w of this.readyWaiters.splice(0)) w.reject(err);
+    for (const fn of this.deathListeners.splice(0)) {
+      try {
+        fn(err);
+      } catch (e) {
+        debugLog(`death listener failed: ${e}`);
+      }
+    }
+  }
+
+  /** `fn` runs once if the bridge dies (exit, or it never started) — not when
+   *  destroy() closes it on purpose. */
+  onDead(fn: (err: Error) => void): void {
+    this.deathListeners.push(fn);
   }
 
   /** Why the bridge is gone (exit, never started, closed), or null while it lives.
@@ -238,17 +257,34 @@ export class BridgeClient {
     this.send({ method: "chat.permission", params: { request_id: requestId, allow, ...extra } });
   }
 
-  /** Shut the bridge down. Requests still pending are dropped, not rejected: the
-   *  caller is quitting, and a rejection nobody awaits would print an error. */
+  /** Shut the bridge down: close its stdin, which ends it through its own
+   *  cleanup (the agent's commands and the MCP servers go with it), and kill
+   *  it only if it is still there after exitGraceMs. The timer is unref'd: it
+   *  never keeps the app alive by itself. Requests still pending are dropped,
+   *  not rejected: the caller is quitting, and a rejection nobody awaits would
+   *  print an error. */
   destroy() {
-    this.dead = new Error("the bridge was closed");
+    if (this.dead?.message === CLOSED) return;
+    this.dead = new Error(CLOSED);
     this.pending.clear();
     this.readyWaiters.length = 0;
+    this.deathListeners.length = 0;
+    const proc = this.proc;
+    if (!proc) return;
     try {
-      this.proc?.stdin?.end?.();
+      proc.stdin?.end?.();
     } catch {
       /* ignore */
     }
-    this.proc?.kill();
+    if (proc.exitCode !== null || proc.signalCode !== null) return;
+    const timer = setTimeout(() => {
+      try {
+        proc.kill();
+      } catch {
+        /* already gone */
+      }
+    }, this.exitGraceMs);
+    timer.unref?.();
+    void proc.exited.then(() => clearTimeout(timer));
   }
 }

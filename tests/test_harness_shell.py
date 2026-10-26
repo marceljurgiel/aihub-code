@@ -174,3 +174,39 @@ def test_bridge_exit_kills_running_shells(tmp_path):
         assert _wait_for(lambda: not _alive(f"sleep {marker}"), 3)
     finally:
         subprocess.run(["pkill", "-f", f"^sleep {marker}"], capture_output=True)
+
+
+@posix
+@pytest.mark.skipif(shutil.which("pgrep") is None, reason="pgrep missing")
+@pytest.mark.parametrize("signame,marker", [("SIGTERM", "30.97531"), ("SIGHUP", "30.86420")])
+def test_bridge_killed_by_a_signal_still_kills_its_shells(tmp_path, signame, marker):
+    # The app's exit (or a terminal hangup) sends the bridge a signal while its
+    # stdin is still open: Python's default action skips main()'s finally, so
+    # a running command (start_new_session: nothing else reaches it) and the MCP
+    # servers would be orphaned.
+    import signal
+    import sys
+    code = (
+        "import sys, threading, time\n"
+        "import aihub.mcp_client as mcp\n"
+        "mcp.shutdown = lambda: sys.stderr.write('MCP-SHUTDOWN\\n')\n"
+        "from aihub_code import shell\n"
+        "from aihub_code import bridge\n"
+        f"threading.Thread(target=shell.run_shell, args=('sleep {marker}',),\n"
+        f"                 kwargs={{'cwd': {str(tmp_path)!r}, 'timeout': 60}}, daemon=True).start()\n"
+        "while not shell._live:\n"
+        "    time.sleep(0.02)\n"
+        "bridge.main()\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert '"event": "ready"' in proc.stdout.readline()
+        assert _wait_for(lambda: _alive(f"sleep {marker}"))
+        proc.send_signal(getattr(signal, signame))
+        _, err = proc.communicate(timeout=10)
+        assert _wait_for(lambda: not _alive(f"sleep {marker}"), 3)
+        assert "MCP-SHUTDOWN" in err
+    finally:
+        proc.kill()
+        subprocess.run(["pkill", "-f", f"^sleep {marker}"], capture_output=True)

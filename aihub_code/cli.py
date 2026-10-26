@@ -28,6 +28,9 @@ from typer.core import TyperCommand  # noqa: E402
 
 from . import __version__
 
+# permissions.MODES, not imported: that module pulls in AIhub's config (slow).
+MODES = ("plan", "build", "auto")
+
 app = typer.Typer(add_completion=False, no_args_is_help=False, pretty_exceptions_enable=False,
                   help="A coding agent for local and cloud models, on AIhub's engine.")
 
@@ -44,14 +47,26 @@ def _find_bun() -> Optional[str]:
     return str(exe) if exe.is_file() else None
 
 
+NO_APP = ("aihub-code can't open the interactive UI: the interactive UI's files are missing "
+          "({path}) — re-run the installer; `aihub-code -p` works without them.")
+
+
+def _app_entry() -> Path:
+    """The Bun app's entry point, in the checkout next to the package."""
+    from . import __file__ as pkg_file
+    return Path(pkg_file).resolve().parent.parent / "app" / "src" / "index.tsx"
+
+
 def _open_interactive(args: dict) -> None:
     """Replace this process with the Bun app; the flags travel as JSON in the env."""
     bun = _find_bun()
     if not bun:
         typer.echo(NO_BUN, err=True)
         raise typer.Exit(2)
-    from . import __file__ as pkg_file
-    entry = Path(pkg_file).resolve().parent.parent / "app" / "src" / "index.tsx"
+    entry = _app_entry()
+    if not entry.is_file():
+        typer.echo(NO_APP.format(path=entry), err=True)
+        raise typer.Exit(2)
     env = dict(os.environ)
     env["AIHUB_CODE_ARGS"] = json.dumps(args)
     env["AIHUB_CODE_BRIDGE"] = json.dumps([sys.executable, "-m", "aihub_code.bridge"])
@@ -98,6 +113,9 @@ def main(
 ):
     """Open the interactive coding UI, or run one task: aihub-code -p "your task"."""
     if not prompt:
+        if mode and mode not in MODES:   # -p says the same (headless.py)
+            typer.echo(f"unknown mode {mode!r}; use one of {', '.join(MODES)}", err=True)
+            raise typer.Exit(2)
         args: dict = {"cont": cont, "mcp": list(mcp or []), "kb": list(kb or [])}
         if model:
             args["model"] = model

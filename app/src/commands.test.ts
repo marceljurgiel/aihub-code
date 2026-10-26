@@ -687,6 +687,52 @@ describe("/model", () => {
   });
 });
 
+describe("after a failed start (the prompt stays usable for /model and /sessions)", () => {
+  async function failed() {
+    const m = make();
+    m.bridge.answers["code.start"] = (p: Record<string, unknown>) =>
+      p.model === "gemma4:cloud" ? new Error("knowledge base nosuch not found") : { ...INFO, session_id: `s-${p.model}`, model: p.model };
+    m.bridge.answers["cloud.models"] = { models: [] };
+    await m.c.start({ ...ARGS, kb: ["nosuch"] });
+    expect(m.c.getState().phase).toBe("error");
+    const run = async (text: string) => {
+      const before = m.sink.lines.length;
+      m.c.submit(text);
+      await settle();
+      return m.sink.lines.slice(before + 1);
+    };
+    return { ...m, run };
+  }
+
+  test("/model opens the picker; a choice starts a session", async () => {
+    const m = await failed();
+    const out = await m.run("/model");
+    expect(out.join("\n")).not.toContain("try again");
+    expect(m.c.getState().picker?.kind).toBe("model");
+    await m.c.pick("llama3.2:3b");
+    expect(m.c.getState()).toMatchObject({ phase: "idle", sessionId: "s-llama3.2:3b", error: null });
+  });
+
+  test("Esc in that picker goes back to where it was: no exit, the error stays", async () => {
+    const m = await failed();
+    await m.run("/model");
+    expect(m.c.getState().picker).not.toBeNull();
+    await m.c.pick(null);
+    expect(m.c.getState()).toMatchObject({ phase: "error", picker: null });
+    expect(m.exits).toEqual([]);
+  });
+
+  test("/sessions opens its picker too", async () => {
+    const m = await failed();
+    m.bridge.answers["code.sessions"] = { sessions: [{ id: "old", updated: "", title: "t", turns: 1 }] };
+    m.bridge.answers["code.resume"] = { ...INFO, session_id: "old" };
+    await m.run("/sessions");
+    expect(m.c.getState().picker?.kind).toBe("session");
+    await m.c.pick("old");
+    expect(m.c.getState()).toMatchObject({ phase: "idle", sessionId: "old" });
+  });
+});
+
 describe("/clear", () => {
   test("a new session with the same model and mode, and a dim divider in the transcript", async () => {
     const m = await started();
@@ -756,8 +802,10 @@ describe("/exit and /hub", () => {
   test("/exit works while a turn runs: it cancels first", async () => {
     const m = await running();
     await m.run("/exit");
-    expect(m.exits).toEqual(["exit"]);
     expect(m.bridge.controls.some((c) => c.method === "chat.cancel")).toBe(true);
+    m.bridge.lastStream.finish({ cancelled: true }); // the engine saves the session, then ends the turn
+    await settle();
+    expect(m.exits).toEqual(["exit"]);
   });
 
   test("/hub says where the rest lives", async () => {

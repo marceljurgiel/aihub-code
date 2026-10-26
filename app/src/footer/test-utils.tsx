@@ -35,6 +35,18 @@ export const PERM = (id: number, extra: Record<string, unknown> = {}) => ({
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Wait for a real timer's effect (a tick, a lapse) by polling, not by a
+ *  fixed sleep that a loaded machine can outrun. Throws after `ms`. */
+export async function until(pred: () => boolean | Promise<boolean>, step: () => Promise<void>, ms = 3000): Promise<void> {
+  const end = Date.now() + ms;
+  for (;;) {
+    await step();
+    if (await pred()) return;
+    if (Date.now() > end) throw new Error("until: timed out");
+    await sleep(20);
+  }
+}
+
 export interface Mounted {
   c: Controller;
   bridge: MockBridge;
@@ -57,6 +69,8 @@ export interface MountOptions {
   commands?: SlashCommand[];
   history?: string[];
   guardMs?: number;
+  /** Default: guardMs. */
+  permissionQuietMs?: number;
   ctrlCWindowMs?: number;
   /** The most rows the footer may take (the app passes the terminal's budget). */
   maxHeight?: number;
@@ -104,6 +118,7 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
       history={o.history}
       now={() => clock.t}
       guardMs={o.guardMs ?? 0}
+      permissionQuietMs={o.permissionQuietMs ?? o.guardMs ?? 0}
       ctrlCWindowMs={o.ctrlCWindowMs}
       maxHeight={o.maxHeight}
     />

@@ -173,3 +173,24 @@ def test_windows_runs_bun_as_a_child_and_returns_its_exit_code(monkeypatch):
     assert argv[:2] == ["/opt/bun/bin/bun", "run"] and argv[2].endswith("index.tsx")
     assert json.loads(env["AIHUB_CODE_ARGS"])["model"] == "m"
     assert json.loads(env["AIHUB_CODE_BRIDGE"])[1:] == ["-m", "aihub_code.bridge"]
+
+
+def test_interactive_unknown_mode_is_exit_2_with_the_message(monkeypatch):
+    # It used to be dropped on the way to the app: the session started in build.
+    calls = _patch_launch(monkeypatch)
+    r = CliRunner().invoke(app, ["--mode", "yolo"])
+    assert r.exit_code == 2 and calls == []
+    assert "unknown mode 'yolo'; use one of plan, build, auto" in r.output
+    from aihub_code.permissions import MODES
+    assert cli_mod.MODES == MODES
+
+
+def test_interactive_without_the_app_files_is_exit_2_with_the_message(monkeypatch, tmp_path):
+    # A non-editable install has no app/ next to the package: say so instead of
+    # Bun's "module not found".
+    calls = _patch_launch(monkeypatch)
+    monkeypatch.setattr(cli_mod, "_app_entry", lambda: tmp_path / "app" / "src" / "index.tsx")
+    r = CliRunner().invoke(app, [])
+    assert r.exit_code == 2 and calls == []
+    assert "the interactive UI's files are missing" in r.output
+    assert "re-run the installer" in r.output

@@ -126,7 +126,11 @@ the change when there is one:
 
 Press `1`, `2` or `3`, or use the arrow keys and Enter. Option 2 stores an
 allow rule for the project (`/rules` lists them, `/rules remove N` removes
-one). Option 3 lets you type what the model should do instead. Esc says no.
+one); it is only offered when there is a rule to store, and without one `2`
+does nothing, so `3` is always No. Option 3 lets you type what the model
+should do instead. Esc says no. Keys count only after half a second without
+typing, so a message you are typing when the question appears can't answer
+it.
 
 ### Undo
 
@@ -162,7 +166,7 @@ To send text that starts with `/`, start it with `//`.
 
 | Key | |
 |---|---|
-| Enter | send (while a turn runs, the message is queued and sent after it) |
+| Enter | send (while a turn runs, the message is queued and sent after it; interrupting the turn drops the queue) |
 | Shift+Enter, Ctrl+J | new line in the prompt |
 | Up / Down | earlier prompts |
 | Tab | complete a slash command |

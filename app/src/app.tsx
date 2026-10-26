@@ -9,7 +9,7 @@
  */
 import type { CliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { homedir } from "node:os";
+import { constants, homedir } from "node:os";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Args } from "./args";
 import { SLASH_COMMANDS, commandTable } from "./commands";
@@ -40,13 +40,20 @@ export interface LaunchOptions {
   onClosed?: (resumeLine: string | null) => void;
   /** How long a resize must be quiet before the replay. */
   resizeQuietMs?: number;
-  /** Where SIGTERM / SIGHUP arrive (the process; tests pass an emitter). */
+  /** Where the exit signals arrive (the process; tests pass an emitter). */
   proc?: { once(name: string, handler: () => void): unknown; off(name: string, handler: () => void): unknown };
   /** Ends the process if closing after a signal hangs (default: process.exit). */
   forceExit?: (code: number) => void;
-  /** How long a signal's shutdown may take before forceExit. */
+  /** How long a signal's shutdown may take before forceExit (default: room
+   *  for the turn's end and the bridge's cleanup, 1.5 s each). */
   forceExitMs?: number;
 }
+
+/** OpenTUI's own exit signals: its handler only destroys the renderer (and a
+ *  handler being there drops the default "terminate"), so each one closes the
+ *  app here, or a headless Bun would live on with its bridge. */
+const EXIT_SIGNALS = ["SIGINT", "SIGTERM", "SIGQUIT", "SIGABRT", "SIGHUP", "SIGPIPE", "SIGBREAK", "SIGBUS"] as const;
+const signalCode = (name: string): number => 128 + ((constants.signals as Record<string, number | undefined>)[name] ?? 0);
 
 /** The prompts of a resumed session, for the footer's Up key. */
 class HistoryStore {
@@ -145,20 +152,15 @@ export function launch(o: LaunchOptions): Launched {
     onExit: () => shutdown(),
   });
 
-  // The renderer's own exit-signal handler only destroys the renderer (and the
-  // default "terminate" is gone once a handler exists): close everything, and
-  // end the process if that hangs. The timer is unref'd, so it never keeps a
-  // process alive that is already done.
+  // A signal leaves as /exit does (a running turn is interrupted and its end
+  // awaited, so the session is saved), and ends the process if that hangs.
+  // The timer is unref'd, so it never keeps a process alive that is already done.
   const proc = o.proc ?? process;
-  const signals = [
-    ["SIGTERM", 143],
-    ["SIGHUP", 129],
-  ] as const;
-  const handlers = signals.map(([name, code]) => {
+  const handlers = EXIT_SIGNALS.map((name) => {
     const h = () => {
-      const timer = setTimeout(() => (o.forceExit ?? ((c: number) => process.exit(c)))(code), o.forceExitMs ?? 2000);
+      const timer = setTimeout(() => (o.forceExit ?? ((c: number) => process.exit(c)))(signalCode(name)), o.forceExitMs ?? 4000);
       timer.unref?.();
-      shutdown();
+      controller.exit();
     };
     proc.once(name, h);
     return [name, h] as const;

@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { Args } from "./args";
 import { launch, type Launched } from "./app";
+import { until } from "./footer/test-utils";
 import { MockBridge } from "./session/mock-bridge";
 
 class AppBridge extends MockBridge {
@@ -141,8 +142,7 @@ describe("the app on a split-footer renderer", () => {
     t.setup.resize(30, 20);
     t.setup.resize(31, 20);
     t.setup.resize(32, 20);
-    await sleep(120);
-    await t.settle();
+    await until(() => t.resets.length > 0, t.settle);
     expect(t.resets).toEqual([{ clearSavedLines: true }]);
     const rows = await t.scrolled();
     const text = rows.join("\n");
@@ -199,6 +199,38 @@ describe("leaving", () => {
       open?.setup.renderer.destroy();
       open = undefined;
     }
+  });
+
+  test("SIGINT, SIGQUIT and SIGPIPE close it too (core's own handler only destroys the renderer)", async () => {
+    const codes = { SIGINT: 130, SIGQUIT: 131, SIGPIPE: 141 } as const;
+    for (const [signal, code] of Object.entries(codes)) {
+      const proc = new EventEmitter();
+      const forced: number[] = [];
+      const t = await run({ launch: { proc, forceExit: (c) => forced.push(c), forceExitMs: 20 } });
+      proc.emit(signal);
+      await t.app.closed;
+      expect((t.bridge as unknown as AppBridge).destroyed).toBe(1);
+      expect(proc.eventNames()).toEqual([]);
+      await sleep(60);
+      expect(forced).toEqual([code]);
+      open?.setup.renderer.destroy();
+      open = undefined;
+    }
+  });
+
+  test("a signal during a turn interrupts it and waits for its end (the engine saves the session), then closes", async () => {
+    const proc = new EventEmitter();
+    const t = await run({ launch: { proc, forceExit: () => {}, forceExitMs: 5000 } });
+    await t.setup.mockInput.typeText("hi");
+    t.setup.mockInput.pressEnter();
+    await t.settle();
+    t.setup.renderer.destroy(); // core's handler runs first
+    expect(() => proc.emit("SIGHUP")).not.toThrow();
+    expect(t.bridge.controls).toContainEqual({ method: "chat.cancel", params: { request_id: t.bridge.lastStream.id } });
+    expect(t.closed).toEqual([]);
+    t.bridge.lastStream.finish({ cancelled: true });
+    await t.app.closed;
+    expect(t.closed).toEqual(["Resume this session: aihub-code --resume s1"]);
   });
 
   test("a renderer that core already destroyed (its own signal handler runs first) is not touched again", async () => {

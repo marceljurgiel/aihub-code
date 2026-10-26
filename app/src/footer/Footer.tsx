@@ -40,13 +40,17 @@ export interface FooterProps {
   history?: readonly string[];
   /** Milliseconds; injectable for tests. */
   now?: () => number;
-  /** Ignore permission-prompt keys this long after it appears. */
+  /** Ignore picker / question keys this long after one appears. */
   guardMs?: number;
+  /** The permission prompt counts a key only after this much quiet (every
+   *  key restarts it): a follow-up being typed can't answer it. */
+  permissionQuietMs?: number;
   /** How long "Press Ctrl+C again to exit" stays. */
   ctrlCWindowMs?: number;
 }
 
 const HISTORY_MAX = 200;
+export const PERMISSION_QUIET_MS = 500;
 const HINTS = {
   permission: "↑↓ choose · enter confirm · esc no",
   note: "enter send · esc back",
@@ -55,7 +59,7 @@ const HINTS = {
 };
 
 export function Footer(props: FooterProps) {
-  const { controller, width, onHeight, commands = [], maxHeight, now = Date.now, guardMs = 250, ctrlCWindowMs = 2000 } = props;
+  const { controller, width, onHeight, commands = [], maxHeight, now = Date.now, guardMs = 250, permissionQuietMs = PERMISSION_QUIET_MS, ctrlCWindowMs = 2000 } = props;
   const st = useController(controller);
   const inputRef = useRef<TextareaRenderable | null>(null);
   const [rows, setRows] = useState(1);
@@ -309,7 +313,7 @@ export function Footer(props: FooterProps) {
           permission={st.permission!}
           width={width}
           now={now}
-          guardMs={guardMs}
+          guardMs={permissionQuietMs}
           onEditing={setNoting}
           onInterrupt={interrupt}
           maxDiff={maxDiff}

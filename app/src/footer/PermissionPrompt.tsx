@@ -4,9 +4,16 @@
  * input for what the model should do instead. Every answer carries the id of
  * the prompt that was on screen, so a late answer can never go to a newer one.
  *
- * The options are numbered 1, 2, 3 as shown: yes; yes and remember (only
- * offered when the engine suggests a rule); no with a note. Without a rule
- * there are two, and the digit keys follow the displayed numbers.
+ * The numbers never move: 1 yes; 2 yes and remember (only shown, and only a
+ * key, when the engine suggests a rule); 3 no with a note. A "2" from habit
+ * must never mean "remember" on one prompt and "no" on the next.
+ *
+ * Keys only count after a quiet moment: every key that arrives within
+ * `guardMs` of the one before (or of the prompt's arrival) is dropped and
+ * restarts the wait, and a key that does nothing (a letter) restarts it too.
+ * So a follow-up being typed when the prompt replaces the input box (its
+ * Enter, a digit in it) can never answer a prompt nobody has read. New-line
+ * keys (Ctrl+J, Shift+Enter) never confirm.
  */
 import { useKeyboard } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
@@ -76,18 +83,17 @@ export function permissionLayout(p: PermissionState, width: number, cursor: numb
     diff = fmtDiff(p.diff, width, room);
     if (diff.length > room) diff = fmtDiff(p.diff, width, room - 1);
   }
-  const labels: { kind: PermissionChoiceKind; label: string }[] = [{ kind: "yes", label: "Yes" }];
+  const labels: { n: number; kind: PermissionChoiceKind; label: string }[] = [{ n: 1, kind: "yes", label: "Yes" }];
   if (p.suggestedRule) {
     const lead = "Yes, and don't ask again for ";
     const tail = " (this project)";
     const room = width - 5 - lead.length - tail.length;
     const rule = ruleText(p);
-    labels.push({ kind: "always", label: room >= 8 ? `${lead}${truncate(rule, room)}${tail}` : truncate(`${lead}${rule}${tail}`, width - 5) });
+    labels.push({ n: 2, kind: "always", label: room >= 8 ? `${lead}${truncate(rule, room)}${tail}` : truncate(`${lead}${rule}${tail}`, width - 5) });
   }
-  labels.push({ kind: "note", label: "No, and tell the model what to do instead" });
-  const options = labels.map(({ kind, label }, i) => {
+  labels.push({ n: 3, kind: "note", label: "No, and tell the model what to do instead" });
+  const options = labels.map(({ n, kind, label }, i) => {
     const on = i === cursor;
-    const n = i + 1;
     const prefix = `${on ? G.pointer : " "} ${n}. `;
     const text = editing && kind === "note" && on ? "" : truncate(label, Math.max(1, width - displayWidth(prefix)));
     const line: Line = [
@@ -105,7 +111,7 @@ export interface PermissionPromptProps {
   permission: PermissionState;
   width: number;
   now: () => number;
-  /** Keys in the first moments are ignored: typed-ahead Enter must not approve. */
+  /** The quiet a key needs before it counts (see the top of this file). */
   guardMs: number;
   /** The inline input opened or closed (the status line's hint follows). */
   onEditing?: (editing: boolean) => void;
@@ -120,13 +126,14 @@ export function PermissionPrompt({ controller, permission: p, width, now, guardM
   const [cursor, setCursor] = useState(0);
   const [editing, setEditing] = useState(false);
   const layout = permissionLayout(p, inner, cursor, editing, maxDiff);
-  const shownAt = useRef(now());
+  // The last key (or the prompt's arrival): the quiet window counts from here.
+  const lastKey = useRef(now());
   // Always the prompt on screen, read at key time (keys can outrun renders).
-  const live = useRef({ p, cursor: 0, editing: false, offered: layout.options.map((o) => o.kind) });
+  const live = useRef({ p, cursor: 0, editing: false, options: layout.options });
   live.current.p = p;
-  live.current.offered = layout.options.map((o) => o.kind);
+  live.current.options = layout.options;
   useEffect(() => {
-    shownAt.current = now();
+    lastKey.current = now();
     return () => onEditing?.(false);
   }, [p.permissionId, p.requestId]);
 
@@ -144,7 +151,7 @@ export function PermissionPrompt({ controller, permission: p, width, now, guardM
     if (kind === "yes") controller.answer("yes", id);
     else if (kind === "always") controller.answer("always", id);
     else {
-      move(live.current.offered.indexOf("note"));
+      move(live.current.options.findIndex((o) => o.kind === "note"));
       edit(true);
     }
   };
@@ -165,20 +172,26 @@ export function PermissionPrompt({ controller, permission: p, width, now, guardM
       }
       return;
     }
-    if (now() - shownAt.current < guardMs) {
-      key.preventDefault();
+    key.preventDefault();
+    const t = now();
+    const early = t - lastKey.current < guardMs;
+    const last = L.options.length - 1;
+    const plain = !key.ctrl && !key.meta && !key.shift;
+    const digit = plain && /^[1-9]$/.test(key.sequence ?? "") ? L.options.find((o) => o.n === Number(key.sequence)) : undefined;
+    // What this key would do. Ctrl+J ("linefeed", or j with ctrl) and
+    // Shift+Enter add a line in the input box: here they do nothing.
+    const act =
+      key.name === "up" ? () => move(L.cursor <= 0 ? last : L.cursor - 1)
+      : key.name === "down" ? () => move(L.cursor >= last ? 0 : L.cursor + 1)
+      : plain && (key.name === "return" || key.name === "kpenter") ? () => choose(L.options[L.cursor]!.kind)
+      : key.name === "escape" ? () => controller.answer({ no: null }, L.p.permissionId)
+      : digit ? () => choose(digit.kind)
+      : null;
+    if (early || !act) {
+      lastKey.current = t; // still typing: the wait starts again
       return;
     }
-    const last = L.offered.length - 1;
-    if (key.name === "up") move(L.cursor <= 0 ? last : L.cursor - 1);
-    else if (key.name === "down") move(L.cursor >= last ? 0 : L.cursor + 1);
-    else if (key.name === "return" || key.name === "kpenter" || key.name === "linefeed") choose(L.offered[L.cursor]!);
-    else if (key.name === "escape") controller.answer({ no: null }, L.p.permissionId);
-    else if (!key.ctrl && !key.meta && /^[1-9]$/.test(key.sequence ?? "")) {
-      const kind = L.offered[Number(key.sequence) - 1];
-      if (kind) choose(kind);
-    }
-    key.preventDefault();
+    act();
   });
 
   // The input's text, tracked by hand: its submit event's argument is typed

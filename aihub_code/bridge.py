@@ -44,6 +44,7 @@ import json
 import logging
 import os
 import queue
+import signal
 import sys
 import threading
 from typing import Any, Callable, Dict
@@ -463,8 +464,33 @@ def _kill_code_shells() -> None:
         shell.kill_all()
 
 
+# Set once main() starts cleaning up: a signal then must not cut the cleanup short.
+_closing = False
+
+
+def _exit_on_signal(signum, frame) -> None:
+    if not _closing:
+        raise SystemExit(128 + signum)
+
+
+def _install_signal_exit() -> None:
+    """SIGTERM/SIGHUP (the app quitting, a terminal hangup) end main() through
+    its finally: Python's default action skips it, and the commands the agent
+    started (in their own sessions) and the MCP servers would outlive us."""
+    for name in ("SIGTERM", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _exit_on_signal)
+        except (ValueError, OSError):   # not the main thread
+            pass
+
+
 def main() -> None:
-    """Read NDJSON requests from stdin until EOF."""
+    """Read NDJSON requests from stdin until EOF (or SIGTERM/SIGHUP)."""
+    global _closing
+    _closing = False
     # stdout is the protocol channel; logs go to stderr (the front-end keeps it).
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
@@ -472,6 +498,7 @@ def main() -> None:
         root = logging.getLogger(name)
         root.addHandler(handler)
         root.setLevel(logging.INFO)
+    _install_signal_exit()
     requests_in = _detach_std_fds()
     _emit(None, "ready", {"version": __version__})
     try:
@@ -480,6 +507,7 @@ def main() -> None:
             if line:
                 _dispatch(line)
     finally:
+        _closing = True
         _kill_code_shells()              # running aihub-code commands too
         from aihub.mcp_client import shutdown
         shutdown()                       # MCP server subprocesses go with us

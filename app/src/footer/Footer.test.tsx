@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { G } from "../glyphs";
 import { colour } from "../scrollback";
 import { modeColor } from "../theme";
-import { INFO, PERM, mount, sleep, unmount, type Mounted } from "./test-utils";
+import { INFO, PERM, mount, sleep, unmount, until, type Mounted } from "./test-utils";
 
 let m: Mounted | undefined;
 afterEach(() => {
@@ -210,9 +210,7 @@ describe("activity line", () => {
   test("a spinner, the label, seconds and the hint, while a turn runs", async () => {
     m = await running();
     m.clock.t += 4000;
-    await m.settle();
-    await sleep(150); // the clock ticks
-    await m.settle();
+    await until(() => /4s/.test(m!.lines()[0] ?? ""), m.settle); // the line re-reads the clock on its tick
     expect(m.lines()[0]).toMatch(/^ \S thinking… 4s · esc to interrupt$/);
   });
 
@@ -259,6 +257,8 @@ describe("Esc, Ctrl+C, Ctrl+D", () => {
     await press(m, "c", { ctrl: true }); // still interrupting: the exit path
     expect(text(m)).toContain("Press Ctrl+C again to exit");
     await press(m, "c", { ctrl: true });
+    m.bridge.lastStream.finish({ cancelled: true }); // exit waits for the turn's end (the session is saved)
+    await m.settle();
     expect(m.exits).toEqual(["exit"]);
   });
 
@@ -279,9 +279,7 @@ describe("Esc, Ctrl+C, Ctrl+D", () => {
     m = await mount({ ctrlCWindowMs: 60 });
     await press(m, "c", { ctrl: true });
     expect(text(m)).toContain("Press Ctrl+C again to exit");
-    await sleep(150);
-    await m.settle();
-    expect(text(m)).not.toContain("Press Ctrl+C");
+    await until(() => !text(m!).includes("Press Ctrl+C"), m.settle);
     expect(text(m)).toContain("shift+tab mode");
     await press(m, "c", { ctrl: true });
     expect(m.exits).toEqual([]);
@@ -457,22 +455,34 @@ describe("permission prompt", () => {
     expect(text(m)).toContain("don't ask again for run_terminal: pytest (this project)");
   });
 
-  test("without a suggested rule the options read 1 and 2, and the keys follow the numbers", async () => {
+  test("without a suggested rule the numbers stay 1 and 3: 2 is hidden and does nothing", async () => {
+    // A "2" from habit must never mean "remember" on one prompt and "no" on the next.
     m = await running();
     await ask(m, 1, { suggested_rule: null });
     expect(text(m)).toContain("1. Yes");
-    expect(text(m)).toContain("2. No, and tell the model what to do instead");
-    expect(text(m)).not.toContain("3.");
+    expect(text(m)).toContain("3. No, and tell the model what to do instead");
+    expect(text(m)).not.toContain("2.");
     expect(text(m)).not.toContain("don't ask again");
-    await press(m, "3"); // there is no 3
+    await press(m, "2");
     expect(perms(m)).toEqual([]);
     expect(m.c.getState().phase).toBe("permission");
-    await press(m, "2"); // the displayed 2 is the note
+    expect(text(m)).not.toContain("Tell the model what to do instead");
+    await press(m, "3");
     expect(text(m)).toContain("Tell the model what to do instead");
     expect(perms(m)).toEqual([]);
     await type(m, "no thanks");
     await enter(m);
     expect(perms(m)).toEqual([{ request_id: m.bridge.lastStream.id, allow: false, permission_id: 1, message: "no thanks" }]);
+  });
+
+  test("without a rule the arrows walk Yes and No; the inline input keeps the 3", async () => {
+    m = await running();
+    await ask(m, 1, { suggested_rule: null });
+    await arrow(m, "down");
+    expect(text(m)).toContain(`${G.pointer} 3. No`);
+    await enter(m);
+    expect(text(m)).toContain(`${G.pointer} 3.`);
+    expect(text(m)).toContain("Tell the model what to do instead");
   });
 
   test("with a rule the options are 1, 2 and 3", async () => {
@@ -616,6 +626,8 @@ describe("permission prompt", () => {
     expect(text(m)).toContain("Press Ctrl+C again to exit");
     expect(m.bridge.controls.filter((c) => c.method === "chat.cancel")).toHaveLength(1);
     await press(m, "c", { ctrl: true });
+    m.bridge.lastStream.finish({ cancelled: true });
+    await m.settle();
     expect(m.exits).toEqual(["exit"]);
   });
 
@@ -663,6 +675,66 @@ describe("permission prompt", () => {
     m.clock.t += 400;
     await press(m, "1");
     expect(perms(m)).toHaveLength(1);
+  });
+
+  test("typing straight through the prompt's arrival never answers it: every key restarts the quiet window", async () => {
+    m = await running({ guardMs: 500 });
+    const at = async (k: string) => {
+      m!.clock.t += 100;
+      if (k === "enter") await enter(m!);
+      else await press(m!, k);
+    };
+    for (const k of "abcd") await at(k); // a follow-up being typed
+    await ask(m, 1);
+    // 100 ms apart: Enter at 300, 1 at 600, 2 at 900 (a rule is offered, so 2 would remember).
+    for (const k of ["a", "b", "enter", "c", "d", "1", "e", "f", "2", "g"]) await at(k);
+    expect(perms(m)).toEqual([]);
+    expect(m.c.getState().phase).toBe("permission");
+    m.clock.t += 500; // quiet: the user has stopped and reads it
+    await press(m, "1");
+    expect(perms(m)).toEqual([{ request_id: m.bridge.lastStream.id, allow: true, permission_id: 1 }]);
+  });
+
+  test("a key that does nothing restarts the window even after it opened: an Enter right after waits", async () => {
+    m = await running({ guardMs: 500 });
+    await ask(m, 1);
+    m.clock.t += 600;
+    await press(m, "x"); // still typing
+    m.clock.t += 100;
+    await enter(m);
+    expect(perms(m)).toEqual([]);
+    m.clock.t += 500;
+    await enter(m);
+    expect(perms(m)).toEqual([{ request_id: m.bridge.lastStream.id, allow: true, permission_id: 1 }]);
+  });
+
+  test("arrows answer at once once the window is open (Down then Enter is not held back)", async () => {
+    m = await running({ guardMs: 500 });
+    await ask(m, 1);
+    m.clock.t += 600;
+    await arrow(m, "down");
+    m.clock.t += 50;
+    await enter(m);
+    expect(perms(m)).toEqual([{ request_id: m.bridge.lastStream.id, allow: true, permission_id: 1, remember: "project" }]);
+  });
+
+  test("Ctrl+J and Shift+Enter (new-line keys) never confirm", async () => {
+    m = await running();
+    await ask(m, 1);
+    await enter(m, { shift: true });
+    await press(m, "j", { ctrl: true });
+    expect(perms(m)).toEqual([]);
+    await enter(m);
+    expect(perms(m)).toHaveLength(1);
+  });
+
+  test("a terminal without the kitty protocol: its Ctrl+J (a linefeed) never confirms", async () => {
+    m = await running({ kitty: false });
+    await ask(m, 1);
+    m.setup.mockInput.pressKey("\n");
+    await m.settle();
+    expect(perms(m)).toEqual([]);
+    expect(m.c.getState().phase).toBe("permission");
   });
 
   test("a narrow terminal: nothing wider than the screen", async () => {

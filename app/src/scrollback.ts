@@ -121,7 +121,9 @@ export function memorySink(transcript?: Transcript): MemorySink {
 // ── Real sink (OpenTUI split-footer) ──────────────────────────────────────────
 
 /** What the sink needs of the renderer; a `CliRenderer` in split-footer mode. */
-export type ScrollbackRenderer = Pick<CliRenderer, "width" | "createScrollbackSurface" | "resetSplitFooterForReplay">;
+export type ScrollbackRenderer = Pick<CliRenderer, "width" | "createScrollbackSurface" | "resetSplitFooterForReplay"> & {
+  readonly isDestroyed?: boolean;
+};
 
 const ROWS_PER_COMMIT = 500;
 
@@ -147,6 +149,9 @@ function rowsOf(lines: Line[], width: number): Line[] {
 
 /** Commit rows (each at most one terminal row wide) to the scrollback. */
 function commitRows(renderer: ScrollbackRenderer, rows: Line[]): void {
+  // A signal destroys the renderer before the app has closed: the last notes
+  // ("interrupted") have no terminal left to go to.
+  if (renderer.isDestroyed) return;
   for (let i = 0; i < rows.length; i += ROWS_PER_COMMIT) {
     const surface = renderer.createScrollbackSurface();
     try {
