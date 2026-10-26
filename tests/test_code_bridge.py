@@ -71,6 +71,7 @@ def test_code_start_returns_project(wire, proj):
     assert d["session_id"] and d["project"]["is_git"] is True
     assert d["mode"] == "build" and d["context_length"] == 8192
     assert d["rules"] == [] and set(d["checkpoints"]) == {"mode", "note"}
+    assert d["model"] == "m"        # a resumed session's model is known only here
     assert set(d["project"]) == {"root", "branch", "dirty_total", "instruction_file", "is_git"}
 
 

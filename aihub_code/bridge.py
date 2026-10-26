@@ -174,7 +174,7 @@ def _code_info(s) -> Dict[str, Any]:
         "session_id": s.id,
         "project": {"root": pr.root, "branch": pr.branch, "dirty_total": pr.dirty_total,
                     "instruction_file": pr.instruction_file, "is_git": pr.is_git},
-        "mode": s.mode,
+        "mode": s.mode, "model": s.model,
         "rules": [_rule_dict(r) for r in s.rules.all()],
         "context_length": s.context_length,
         "checkpoints": {"mode": s.checkpoints.mode, "note": s.checkpoints.note},

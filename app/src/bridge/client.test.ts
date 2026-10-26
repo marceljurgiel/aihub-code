@@ -149,6 +149,7 @@ for line in sys.stdin:
   writeFileSync(file, script);
   await withBridge(["python3", file], async (b) => {
     await b.ready();
+    expect(b.deadError()).toBeNull();
     const events: string[] = [];
     const s = b.stream("code.turn", {}, (e) => events.push(e));
     const pending = b.call("never");
@@ -157,6 +158,7 @@ for line in sys.stdin:
     b.call("die").catch(() => {});
     expect((await sRes)?.message).toContain("code 7");
     expect((await pRes)?.message).toContain(bridgeErrLogPath());
+    expect(b.deadError()?.message).toContain("code 7"); // lets a caller tell "gone" from an engine error
     // After the exit: immediate rejection, no write to a dead pipe, no hang.
     await expect(b.call("ping")).rejects.toThrow("code 7");
     await expect(b.stream("code.turn", {}, () => {}).done).rejects.toThrow("code 7");

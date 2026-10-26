@@ -102,6 +102,12 @@ export class BridgeClient {
     for (const w of this.readyWaiters.splice(0)) w.reject(err);
   }
 
+  /** Why the bridge is gone (exit, never started, closed), or null while it lives.
+   *  An engine error rejects a request too; this tells the two apart. */
+  deadError(): Error | null {
+    return this.dead;
+  }
+
   /** Wait until the bridge emits its `ready` banner; rejects if it dies first. */
   ready(): Promise<{ version: string }> {
     if (this.readyInfo) return Promise.resolve(this.readyInfo);
