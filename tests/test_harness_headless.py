@@ -170,8 +170,10 @@ def test_short_args_picks_first_key_and_truncates():
     assert headless._short_args(None) == ""
 
 
-def test_cli_without_prompt_exit_2():
+def test_cli_without_prompt_and_without_bun_exit_2(monkeypatch):
+    # Bare `aihub-code` opens the interactive app; with no Bun it explains and exits 2.
     from aihub_code.cli import app
+    monkeypatch.setattr("aihub_code.cli._find_bun", lambda: None)
     r = CliRunner().invoke(app, [])
     assert r.exit_code == 2
     assert "aihub-code -p" in r.output

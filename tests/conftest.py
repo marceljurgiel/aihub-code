@@ -74,3 +74,12 @@ def tool_runs(monkeypatch):
     return runs
 
 
+
+
+@pytest.fixture(autouse=True)
+def _never_exec_the_interactive_app(monkeypatch):
+    """A bare `aihub-code` replaces the process with Bun: a test that forgets to
+    patch os.execvpe would swallow the whole pytest run. Fail loudly instead."""
+    def refuse(*args):
+        raise AssertionError(f"test tried to exec {args[0]!r}; patch aihub_code.cli.os.execvpe")
+    monkeypatch.setattr("aihub_code.cli.os.execvpe", refuse)

@@ -17,7 +17,7 @@ def test_cli_version():
 
 def test_cli_help_names_the_flags():
     out = CliRunner().invoke(app, ["--help"]).output
-    for flag in ("--prompt", "--mode", "--model", "--output", "--mcp", "--kb"):
+    for flag in ("--prompt", "--mode", "--model", "--output", "--mcp", "--kb", "--resume", "--continue"):
         assert flag in out
 
 
@@ -68,3 +68,85 @@ def test_cli_makes_stdout_and_stderr_utf8(monkeypatch):
         importlib.reload(cli)
     assert raw_out.getvalue() == "\u0142\u015b\u2192\n".encode("utf-8")
     assert raw_err.getvalue() == "\u0142\u015b\u2192\n".encode("utf-8")
+
+
+# ── bare `aihub-code` opens the interactive app ───────────────────────────────
+import json
+from pathlib import Path
+
+import aihub_code
+import aihub_code.cli as cli_mod
+
+
+def _patch_launch(monkeypatch, bun="/opt/bun/bin/bun"):
+    calls = []
+    monkeypatch.setattr(cli_mod, "_find_bun", lambda: bun)
+    monkeypatch.setattr(cli_mod.os, "execvpe", lambda *a: calls.append(a))
+    return calls
+
+
+def test_interactive_execs_bun_with_the_app_and_args(monkeypatch):
+    calls = _patch_launch(monkeypatch)
+    r = CliRunner().invoke(app, ["--model", "m:cloud", "--mode", "auto", "--resume", "abc",
+                                 "--mcp", "git", "--kb", "docs", "--kb", "api"])
+    assert r.exit_code == 0
+    (file, argv, env), = calls
+    app_entry = Path(aihub_code.__file__).resolve().parent.parent / "app" / "src" / "index.tsx"
+    assert file == "/opt/bun/bin/bun" and argv == ["/opt/bun/bin/bun", "run", str(app_entry)]
+    args = json.loads(env["AIHUB_CODE_ARGS"])
+    assert args == {"model": "m:cloud", "mode": "auto", "resume": "abc", "cont": False,
+                    "mcp": ["git"], "kb": ["docs", "api"]}
+    assert json.loads(env["AIHUB_CODE_BRIDGE"]) == [sys.executable, "-m", "aihub_code.bridge"]
+
+
+def test_interactive_defaults_send_no_model_or_resume(monkeypatch):
+    calls = _patch_launch(monkeypatch)
+    assert CliRunner().invoke(app, []).exit_code == 0
+    args = json.loads(calls[0][2]["AIHUB_CODE_ARGS"])
+    assert args == {"cont": False, "mcp": [], "kb": []}
+
+
+def test_resume_without_an_id_and_continue(monkeypatch):
+    calls = _patch_launch(monkeypatch)
+    assert CliRunner().invoke(app, ["--resume"]).exit_code == 0
+    assert json.loads(calls[0][2]["AIHUB_CODE_ARGS"])["resume"] is True
+    calls.clear()
+    assert CliRunner().invoke(app, ["--continue"]).exit_code == 0
+    assert json.loads(calls[0][2]["AIHUB_CODE_ARGS"])["cont"] is True
+
+
+def test_resume_followed_by_another_flag_is_still_a_bare_resume(monkeypatch):
+    calls = _patch_launch(monkeypatch)
+    assert CliRunner().invoke(app, ["--resume", "--mode", "plan"]).exit_code == 0
+    args = json.loads(calls[0][2]["AIHUB_CODE_ARGS"])
+    assert args["resume"] is True and args["mode"] == "plan"
+
+
+def test_missing_bun_is_exit_2_with_the_message(monkeypatch):
+    calls = _patch_launch(monkeypatch, bun=None)
+    r = CliRunner().invoke(app, [])
+    assert r.exit_code == 2 and calls == []
+    assert ("aihub-code needs Bun for the interactive UI — install it from https://bun.sh "
+            "or re-run the installer; `aihub-code -p` works without it.") in r.output
+
+
+def test_find_bun_prefers_path_then_the_bun_install_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli_mod.shutil, "which", lambda n: "/usr/bin/bun")
+    assert cli_mod._find_bun() == "/usr/bin/bun"
+    monkeypatch.setattr(cli_mod.shutil, "which", lambda n: None)
+    monkeypatch.setattr(cli_mod.Path, "home", classmethod(lambda c: tmp_path))
+    assert cli_mod._find_bun() is None
+    exe = tmp_path / ".bun" / "bin" / ("bun.exe" if sys.platform == "win32" else "bun")
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    assert cli_mod._find_bun() == str(exe)
+
+
+def test_headless_still_runs_with_p(monkeypatch):
+    seen = {}
+    import aihub_code.headless as headless
+    monkeypatch.setattr(headless, "run_headless", lambda prompt, **kw: seen.update(prompt=prompt, **kw) or 0)
+    calls = _patch_launch(monkeypatch)
+    r = CliRunner().invoke(app, ["-p", "fix it"])
+    assert r.exit_code == 0 and calls == []
+    assert seen["prompt"] == "fix it" and seen["mode"] == "build"

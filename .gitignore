@@ -4,5 +4,6 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+app/node_modules/
 .claude/
 CLAUDE.local.md
