@@ -1249,16 +1249,10 @@ export class Controller {
       return;
     }
     if (!this.canSwitch(true)) return;
-    const turn = this.turn;
     await this.switchWith(async () => {
-      if (turn) {
-        this.cancel(); // writes "interrupted" and drops what was queued behind it
-        await turn.handle?.done.then(noop, noop);
-        if (this.o.bridge.deadError()) return; // onFail has said it
-        this.set({ phase: "starting" });
-      } else {
-        this.dropQueued();
-      }
+      // The agent is checked before anything changes: a profile that can't
+      // run (a typo) leaves the running turn and its queue alone. agent.check
+      // asks no model for an answer, so it may overlap a turn.
       let check: AgentCheck = {};
       if (k.type === "agent") {
         const { model, streamModel, backend } = this.state;
@@ -1267,6 +1261,17 @@ export class Controller {
           this.error(`Agent unavailable: ${check.reason ?? "unknown reason"}`);
           return;
         }
+      }
+      // The turn running now (one may have ended during the check).
+      const turn = this.turn;
+      if (turn) {
+        this.cancel(); // writes "interrupted" and drops what was queued behind it
+        await turn.handle?.done.then(noop, noop);
+        if (this.o.bridge.deadError()) return; // onFail has said it
+        this.set({ phase: "starting" });
+      } else {
+        this.dropQueued();
+        if (this.state.phase === "idle") this.set({ phase: "starting" });
       }
       if (cur.type === "code") this.leaveCode();
       if (k.type === "code") await this.enterCode();

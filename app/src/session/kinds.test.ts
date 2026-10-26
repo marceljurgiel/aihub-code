@@ -128,6 +128,27 @@ describe("/agent <profile>", () => {
     expect(m.bridge.to("chat.start")).toHaveLength(0);
   });
 
+  test("during a turn, a failed agent.check leaves everything as it was: no interrupt, queue kept, turn live", async () => {
+    const m = await started();
+    m.bridge.answers["agent.check"] = { ok: false, reason: "x" };
+    await m.run("first");
+    const turn = m.bridge.lastStream;
+    m.c.submit("queued one");
+    await m.c.setKind({ type: "agent", name: "reviwer", submode: "build" });
+    expect(m.text()).toContain("Agent unavailable: x");
+    expect(m.bridge.controls.filter((x) => x.method === "chat.cancel")).toEqual([]);
+    expect(m.text()).not.toContain("interrupted");
+    expect(m.text()).not.toContain("dropped");
+    expect(m.c.getState()).toMatchObject({ kind: { type: "code" }, phase: "running", queue: ["queued one"] });
+    // The turn goes on and the queued prompt follows it, to the code agent.
+    turn.emit("text", { text: "still here" });
+    turn.finish({});
+    await settle();
+    expect(m.text()).toContain("still here");
+    expect(m.bridge.lastStream.method).toBe("code.turn");
+    expect(m.bridge.lastStream.params).toEqual({ text: "queued one" });
+  });
+
   test("ok → turns carry agent:true, the name and the submode; the agent's context is used", async () => {
     const m = await started();
     await m.c.setKind({ type: "agent", name: "reviewer", submode: "plan" });
