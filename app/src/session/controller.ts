@@ -221,7 +221,7 @@ export class Controller {
       }
       const model = args.model || String(config.default_chat_model ?? "").trim();
       if (!model) return await this.pickModel();
-      await this.startSession(model);
+      await this.startSession(model, true);
     } catch (e) {
       this.failStart(e);
     }
@@ -231,15 +231,16 @@ export class Controller {
   async pick(id: string | null): Promise<void> {
     const picker = this.state.picker;
     if (!picker) return;
-    this.set({ picker: null });
+    // "starting" while the session comes up: prompts typed meanwhile queue.
+    this.set({ picker: null, phase: "starting" });
     try {
       if (picker.kind === "model") {
         if (id === null) return this.exit();
-        await this.startSession(id);
+        await this.startSession(id, false); // it came from the server's own list
       } else if (id === null) {
         const model = (await this.o.bridge.request<Record<string, unknown>>("config.get", {})).default_chat_model;
         if (!model) return await this.pickModel();
-        await this.startSession(String(model));
+        await this.startSession(String(model), true);
       } else {
         await this.resume(id);
       }
@@ -248,7 +249,8 @@ export class Controller {
     }
   }
 
-  private async pickModel(): Promise<void> {
+  private async pickModel(missing?: string): Promise<void> {
+    if (missing) this.note(`model ${missing} isn't available on the server \u2014 pick one`);
     const { models = [] } = await this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {});
     this.openPicker({
       kind: "model",
@@ -257,11 +259,27 @@ export class Controller {
     });
   }
 
+  private async modelMissing(model: string): Promise<boolean> {
+    try {
+      const [installed, cloud] = await Promise.all([
+        this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {}),
+        this.o.bridge.request<{ models?: { name: string }[] }>("cloud.models", {}),
+      ]);
+      if (!Array.isArray(installed.models) || !Array.isArray(cloud.models)) return false;
+      return ![...installed.models, ...cloud.models].some((m) => m.name === model);
+    } catch {
+      return false;
+    }
+  }
+
   private openPicker(picker: PickerState): void {
     this.set({ phase: "picker", picker });
   }
 
-  private async startSession(model: string): Promise<void> {
+  /** With `check`, a model the server has under neither list opens the picker
+   *  instead. If a lookup fails (offline) we go ahead: the turn reports it. */
+  private async startSession(model: string, check: boolean): Promise<void> {
+    if (check && (await this.modelMissing(model))) return this.pickModel(model);
     const { mode, mcp, kb } = this.startArgs;
     const info = await this.o.bridge.request("code.start", {
       cwd: this.o.cwd ?? process.cwd(),
@@ -314,6 +332,7 @@ export class Controller {
   }
 
   private failStart(e: unknown): void {
+    if (this.state.phase === "error") return; // already reported
     const msg = errText(e);
     this.error(msg);
     this.set({ phase: "error", error: msg, activity: null, permission: null, picker: null });
@@ -326,17 +345,16 @@ export class Controller {
     const dead = this.o.bridge.deadError();
     if (dead) return this.bridgeGone(dead);
     const { phase } = this.state;
-    if (this.turn || phase === "starting") {
-      this.set({ queue: [...this.state.queue, text] });
-      return;
-    }
-    if (!this.state.sessionId) {
+    if (!this.state.sessionId && phase !== "starting") {
       this.error(
         phase === "picker" ? "no session yet — choose one first" : "no session — fix the problem above, or /exit",
       );
       return;
     }
-    this.sendTurn(text);
+    // Always behind what is already waiting; it goes out at once only when
+    // nothing is in the way (a turn, the session starting, a mode change).
+    this.set({ queue: [...this.state.queue, text] });
+    this.drainQueue();
   }
 
   private bridgeGone(dead: Error): void {
@@ -345,7 +363,8 @@ export class Controller {
   }
 
   private drainQueue(): void {
-    if (this.turn || !this.state.sessionId || this.o.bridge.deadError()) return;
+    if (this.turn || this.modeBusy || this.state.phase === "starting") return;
+    if (!this.state.sessionId || this.o.bridge.deadError()) return;
     const [next, ...rest] = this.state.queue;
     if (next === undefined) return;
     this.set({ queue: rest });
@@ -415,6 +434,7 @@ export class Controller {
         this.set({ ctx: { used: Number(data.used) || 0, limit: Number(data.limit) || this.state.ctx.limit } });
         break;
       case "code_checkpoint":
+        this.flush(turn);
         this.checkpointNote(data.note);
         break;
       case "chat_error":
@@ -478,6 +498,7 @@ export class Controller {
       this.set({ phase: "error", error: msg, activity: null, permission: null });
     } else {
       this.set({ phase: "idle", activity: null, permission: null });
+      this.drainQueue(); // what was typed meanwhile still goes out, in order
     }
   }
 
@@ -485,10 +506,10 @@ export class Controller {
 
   /** Answer the open prompt. `permissionId` is the id of the prompt the user
    *  was looking at: an answer to a prompt that has since been replaced is dropped. */
-  answer(choice: PermissionChoice, permissionId?: number | null): void {
+  answer(choice: PermissionChoice, permissionId: number | null): void {
     const p = this.state.permission;
     if (!p || !this.turn) return;
-    if (permissionId !== undefined && permissionId !== p.permissionId) return;
+    if (permissionId !== p.permissionId) return;
     const extra: Record<string, unknown> = {};
     if (p.permissionId !== null) extra.permission_id = p.permissionId;
     let allow = true;
@@ -507,7 +528,8 @@ export class Controller {
   }
 
   /** Interrupt the running turn (Esc / Ctrl+C). The engine finishes on its own
-   *  time, so the phase stays "running" until `done`; events meanwhile are dropped. */
+   *  time, so the phase stays "running" (activity "interrupting…") until `done`;
+   *  events meanwhile are dropped, and a second cancel does nothing. */
   cancel(): void {
     const turn = this.turn;
     if (!turn || turn.cancelled) return;
@@ -515,7 +537,7 @@ export class Controller {
     turn.cancelled = true;
     turn.handle?.cancel();
     this.note(`  ${G.elbow} interrupted`);
-    this.set({ activity: null, permission: null });
+    this.set({ activity: { label: "interrupting…", since: this.now() }, permission: null });
   }
 
   // ── mode ───────────────────────────────────────────────────────────────────
@@ -545,7 +567,9 @@ export class Controller {
         try {
           const r = await this.o.bridge.request<{ mode: Mode }>("code.mode", { mode: wanted });
           this.modeConfirmed = MODES.includes(r.mode) ? r.mode : wanted;
-          if (this.modeWanted === null) {
+          // Nothing newer to send (or the user came back to this very mode).
+          if (this.modeWanted === null || this.modeWanted === this.modeConfirmed) {
+            this.modeWanted = null;
             this.note(`mode: ${this.modeConfirmed}`);
             this.set({ mode: this.modeConfirmed });
           }
@@ -557,6 +581,7 @@ export class Controller {
       }
     } finally {
       this.modeBusy = false;
+      this.drainQueue(); // a prompt typed meanwhile was waiting for the engine
     }
   }
 

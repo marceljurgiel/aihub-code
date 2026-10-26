@@ -27,6 +27,8 @@ function make(over: Partial<{ width: number; config: Record<string, unknown> }> 
   bridge.answers["config.get"] = over.config ?? { default_chat_model: "gemma4:cloud" };
   bridge.answers["code.start"] = INFO;
   bridge.answers["code.mode"] = (p: Record<string, unknown>) => ({ mode: p.mode });
+  bridge.answers["models.installed"] = { models: [{ name: "gemma4:cloud" }, { name: "llama3.2:3b" }] };
+  bridge.answers["cloud.models"] = { models: [{ name: "kimi-k3:cloud" }] };
   const sink = memorySink();
   let clock = 1000;
   const exits: string[] = [];
@@ -74,8 +76,8 @@ describe("start-up", () => {
     const { bridge, c } = make();
     expect(c.getState().phase).toBe("starting");
     await c.start({ cont: false, mode: "plan", mcp: ["files"], kb: ["docs"] });
-    expect(bridge.calls.map((x) => x.method)).toEqual(["config.get", "code.start"]);
-    expect(bridge.calls[1]!.params).toEqual({
+    expect(bridge.calls.map((x) => x.method)).toEqual(["config.get", "models.installed", "cloud.models", "code.start"]);
+    expect(bridge.to("code.start")[0]!.params).toEqual({
       cwd: "/home/alex/proj",
       model: "gemma4:cloud",
       mode: "plan",
@@ -87,7 +89,7 @@ describe("start-up", () => {
   test("--model wins over the configured default; mode defaults to build", async () => {
     const { bridge, c } = make();
     await c.start({ ...ARGS, model: "llama3.2:3b" });
-    expect(bridge.calls[1]!.params).toMatchObject({ model: "llama3.2:3b", mode: "build" });
+    expect(bridge.to("code.start")[0]!.params).toMatchObject({ model: "llama3.2:3b", mode: "build" });
   });
 
   test("the header and the notes are written; state is idle with the session's values", async () => {
@@ -414,7 +416,7 @@ describe("permission", () => {
   test("yes: allow true with the prompt's id; back to running", async () => {
     const { turn, c, bridge } = await running();
     turn.emit("permission_request", PERM(7));
-    c.answer("yes");
+    c.answer("yes", 7);
     expect(bridge.controls).toEqual([
       { method: "chat.permission", params: { request_id: turn.id, allow: true, permission_id: 7 } },
     ]);
@@ -425,25 +427,25 @@ describe("permission", () => {
   test("always: allow true and remember for the project", async () => {
     const { turn, c, bridge } = await running();
     turn.emit("permission_request", PERM(2));
-    c.answer("always");
+    c.answer("always", 2);
     expect(bridge.controls[0]!.params).toEqual({ request_id: turn.id, allow: true, permission_id: 2, remember: "project" });
   });
 
   test("always without a suggested rule is just a yes", async () => {
     const { turn, c, bridge } = await running();
     turn.emit("permission_request", PERM(2, { suggested_rule: null }));
-    c.answer("always");
+    c.answer("always", 2);
     expect(bridge.controls[0]!.params).toEqual({ request_id: turn.id, allow: true, permission_id: 2 });
   });
 
   test("no, with or without a message for the model", async () => {
     const { turn, c, bridge } = await running();
     turn.emit("permission_request", PERM(3));
-    c.answer({ no: "use pytest -x instead" });
+    c.answer({ no: "use pytest -x instead" }, 3);
     turn.emit("permission_request", PERM(4));
-    c.answer({ no: null });
+    c.answer({ no: null }, 4);
     turn.emit("permission_request", PERM(5));
-    c.answer({ no: "  " });
+    c.answer({ no: "  " }, 5);
     expect(bridge.controls.map((x) => x.params)).toEqual([
       { request_id: turn.id, allow: false, permission_id: 3, message: "use pytest -x instead" },
       { request_id: turn.id, allow: false, permission_id: 4 },
@@ -453,10 +455,10 @@ describe("permission", () => {
 
   test("an answer with no prompt open sends nothing; a second answer is not sent twice", async () => {
     const { turn, c, bridge } = await running();
-    c.answer("yes");
+    c.answer("yes", 1);
     turn.emit("permission_request", PERM(1));
-    c.answer("yes");
-    c.answer("yes");
+    c.answer("yes", 1);
+    c.answer("yes", 1);
     expect(bridge.controls).toHaveLength(1);
   });
 
@@ -498,7 +500,7 @@ describe("cancel", () => {
     c.cancel();
     c.cancel();
     expect(bridge.controls).toEqual([{ method: "chat.cancel", params: { request_id: turn.id } }]);
-    expect(c.getState()).toMatchObject({ permission: null, activity: null });
+    expect(c.getState()).toMatchObject({ permission: null, activity: { label: "interrupting…" } });
     expect(sink.lines.slice(-2)).toEqual(["half a sent", `  ${E} interrupted`]);
     expect(sink.styled.at(-1)!.every((s) => s.dim)).toBe(true);
   });
@@ -514,13 +516,24 @@ describe("cancel", () => {
     turn.emit("code_todos", { todos: [{ content: "x", status: "pending" }] });
     turn.emit("chat_error", { message: "late error" });
     expect(sink.lines.slice(from)).toEqual([]);
-    expect(c.getState().activity).toBeNull();
+    expect(c.getState().activity?.label).toBe("interrupting…"); // until the engine's done
     expect(c.getState().todos).toEqual([]);
     expect(c.getState().phase).toBe("running"); // the engine has not finished yet
     turn.finish({ cancelled: true });
     await settle();
-    expect(c.getState().phase).toBe("idle");
+    expect(c.getState()).toMatchObject({ phase: "idle", activity: null });
     expect(sink.lines.slice(from)).toEqual([]);
+  });
+
+  test("a second Esc while interrupting does nothing", async () => {
+    const { turn, c, bridge, sink } = await running();
+    c.cancel();
+    const since = c.getState().activity;
+    c.cancel();
+    expect(bridge.controls).toHaveLength(1);
+    expect(sink.lines.filter((l) => l.includes("interrupted"))).toHaveLength(1);
+    expect(c.getState().activity).toBe(since);
+    void turn;
   });
 
   test("a prompt that arrives after cancel is denied at once, not shown", async () => {
@@ -726,3 +739,161 @@ describe("commands, exit, subscribe", () => {
     expect(n).toBe(seen);
   });
 });
+
+describe("fix round 1", () => {
+  test("I1: a queue kept after a failed turn is sent in order, ahead of a later prompt", async () => {
+    const { bridge, c, turn } = await running("first");
+    c.submit("run tests");
+    turn.fail(new Error("Another aihub-code session is working in this project."));
+    await settle();
+    c.submit("hello");
+    await settle();
+    expect(bridge.to("code.turn").map((x) => x.params.text)).toEqual(["first", "run tests"]);
+    expect(c.getState().queue).toEqual(["hello"]);
+    bridge.lastStream.finish({});
+    await settle();
+    expect(bridge.to("code.turn").map((x) => x.params.text)).toEqual(["first", "run tests", "hello"]);
+  });
+
+  test("I1: a prompt submitted while an old queue exists goes behind it", async () => {
+    const { bridge, c } = await started();
+    c.submit("a"); // sends
+    await settle();
+    c.submit("b");
+    bridge.lastStream.fail(new Error("boom"));
+    bridge.lastStream.fail(new Error("again")); // ignored: already settled
+    await settle();
+    expect(bridge.to("code.turn").map((x) => x.params.text)).toEqual(["a", "b"]);
+  });
+
+  test("I2: a prompt typed while a mode change is in flight waits for it", async () => {
+    const { bridge, c, sink } = await started();
+    let release!: () => void;
+    bridge.answers["code.mode"] = (p: Record<string, unknown>) =>
+      new Promise((res) => (release = () => res({ mode: p.mode }))) as unknown;
+    c.cycleMode();
+    await settle();
+    c.submit("go ahead");
+    await settle();
+    expect(bridge.to("code.turn")).toHaveLength(0);
+    expect(c.getState().queue).toEqual(["go ahead"]);
+    release();
+    await settle();
+    expect(bridge.to("code.turn").map((x) => x.params.text)).toEqual(["go ahead"]);
+    expect(sink.lines.indexOf("mode: auto")).toBeLessThan(sink.lines.indexOf("> go ahead"));
+    expect(c.getState().queue).toEqual([]);
+  });
+
+  test("I2: a refused mode change still lets the queue go", async () => {
+    const { bridge, c } = await started();
+    bridge.answers["code.mode"] = new Error("nope");
+    c.cycleMode();
+    c.submit("next");
+    await settle();
+    expect(bridge.to("code.turn").map((x) => x.params.text)).toEqual(["next"]);
+  });
+
+  test("I3: a model the server lacks opens the picker with a note; code.start is not called", async () => {
+    const { bridge, c, sink } = make();
+    await c.start({ ...ARGS, model: "ghost:7b" });
+    expect(bridge.to("code.start")).toHaveLength(0);
+    expect(c.getState().phase).toBe("picker");
+    expect(c.getState().picker?.items.map((i) => i.id)).toEqual(["gemma4:cloud", "llama3.2:3b"]);
+    expect(sink.lines).toContain("model ghost:7b isn't available on the server — pick one");
+    expect(sink.styled.at(-1)![0]!.dim).toBe(true);
+    await c.pick("llama3.2:3b");
+    expect(bridge.to("code.start")).toHaveLength(1);
+    expect(bridge.to("code.start")[0]!.params).toMatchObject({ model: "llama3.2:3b" });
+    expect(bridge.to("cloud.models")).toHaveLength(1); // the picked model is not looked up again
+  });
+
+  test("I3: a cloud model listed by cloud.models starts normally", async () => {
+    const { bridge, c } = make();
+    await c.start({ ...ARGS, model: "kimi-k3:cloud" });
+    expect(bridge.to("code.start")).toHaveLength(1);
+  });
+
+  test("I3: if a lookup fails (offline) code.start goes ahead", async () => {
+    for (const method of ["models.installed", "cloud.models"]) {
+      const { bridge, c } = make();
+      bridge.answers[method] = new Error("Ollama is offline");
+      await c.start({ ...ARGS, model: "ghost:7b" });
+      expect(bridge.to("code.start"), method).toHaveLength(1);
+      expect(c.getState().phase).toBe("idle");
+    }
+  });
+
+  test("I3: an answer without a model list counts as a failed lookup", async () => {
+    const { bridge, c } = make();
+    bridge.answers["cloud.models"] = {};
+    await c.start({ ...ARGS, model: "ghost:7b" });
+    expect(bridge.to("code.start")).toHaveLength(1);
+  });
+
+  test("I3: the configured default is checked too", async () => {
+    const { bridge, c } = make({ config: { default_chat_model: "qwen:0.5b" } });
+    await c.start(ARGS);
+    expect(c.getState().phase).toBe("picker");
+    expect(bridge.to("code.start")).toHaveLength(0);
+  });
+
+  test("M1: a checkpoint note flushes the partial text first", async () => {
+    const { turn, sink } = await running();
+    const from = sink.lines.length;
+    turn.emit("text", { text: "half" });
+    turn.emit("code_checkpoint", { turn: "t", mode: "files", note: "copies only" });
+    expect(sink.lines.slice(from)).toEqual(["half", "copies only"]);
+  });
+
+  test("M4: cycling back to the mode in flight still prints its note", async () => {
+    const { bridge, c, sink } = await started();
+    const releases: (() => void)[] = [];
+    bridge.answers["code.mode"] = (p: Record<string, unknown>) =>
+      new Promise((res) => releases.push(() => res({ mode: p.mode }))) as unknown;
+    c.setMode("plan"); // in flight
+    await settle();
+    c.setMode("auto");
+    c.setMode("plan"); // back to the one in flight
+    expect(c.getState().mode).toBe("plan");
+    releases[0]!();
+    await settle();
+    expect(bridge.to("code.mode").map((x) => x.params.mode)).toEqual(["plan"]);
+    expect(sink.lines.filter((l) => l.startsWith("mode:"))).toEqual(["mode: plan"]);
+    expect(c.getState().mode).toBe("plan");
+    c.setMode("build"); // and the machine is still usable
+    await settle();
+    releases[1]!();
+    await settle();
+    expect(sink.lines.at(-1)).toBe("mode: build");
+  });
+
+  test("M5: while the picked session starts, the phase is starting and prompts queue", async () => {
+    const { bridge, c } = make();
+    bridge.answers["code.sessions"] = { sessions: [{ id: "s2", updated: "", title: "t", turns: 1 }] };
+    let release!: () => void;
+    bridge.answers["code.resume"] = () => new Promise((res) => (release = () => res({ ...INFO, session_id: "s2", messages: [] }))) as unknown;
+    await c.start({ ...ARGS, resume: true });
+    const picking = c.pick("s2");
+    await settle();
+    expect(c.getState()).toMatchObject({ phase: "starting", picker: null });
+    c.submit("early");
+    expect(c.getState().queue).toEqual(["early"]);
+    release();
+    await picking;
+    await settle();
+    expect(bridge.to("code.turn")[0]!.params).toEqual({ text: "early" });
+  });
+
+  test("M6: the bridge dying during start-up prints one red line", async () => {
+    const { bridge, c, sink } = make();
+    const gone = new Error("bridge process exited (code 1)");
+    bridge.answers["code.start"] = () => {
+      bridge.dead = gone;
+      return gone;
+    };
+    await c.start(ARGS);
+    expect(sink.lines.filter((l) => l.startsWith(G.cross))).toEqual([`${G.cross} bridge process exited (code 1)`]);
+    expect(c.getState().phase).toBe("error");
+  });
+});
+
