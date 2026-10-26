@@ -18,7 +18,8 @@
 import type { TextareaRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { kindLabel, type Controller } from "../session/controller";
+import type { Controller } from "../session/controller";
+import { kindLabel } from "../session/kinds";
 import { useController } from "../session/useController";
 import { sanitize } from "../width";
 import { PanelHost } from "../panels/PanelHost";

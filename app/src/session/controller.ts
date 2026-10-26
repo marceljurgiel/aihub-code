@@ -42,7 +42,8 @@ import {
 import { MarkdownStreamer } from "../transcript/markdown";
 import { exitLine } from "../replay";
 import { sanitize, stripCR } from "../width";
-import { agentNote, HubChat, type AgentInfo, type ChatMessage, type HubKind } from "./hubChat";
+import { agentNote, HubChat, type ChatMessage, type HubKind } from "./hubChat";
+import { CODE, fmtKnowledge, hubDiff, kindHeader, kindLabel, sameKind, type AgentCheck, type Kind } from "./kinds";
 
 /** What the controller needs of BridgeClient (tests pass a mock). */
 export interface Bridge {
@@ -61,27 +62,6 @@ export interface Bridge {
 export type Backend = "ollama" | "api";
 
 export type Phase = "starting" | "idle" | "running" | "permission" | "picker" | "error";
-
-/** Who the prompt talks to: the code agent (aihub-code's own session), plain
- *  chat, or one of AIhub's agent profiles (both run by AIhub's chat.turn). */
-export type Kind = { type: "code" } | HubKind;
-
-const CODE: Kind = { type: "code" };
-
-const sameKind = (a: Kind, b: Kind): boolean =>
-  a.type === b.type && (a.type !== "agent" || (b.type === "agent" && a.name === b.name && a.submode === b.submode));
-
-/** The status line's first word: the code agent's mode, `chat`, or
- *  `agent <name> · <submode>`. */
-export function kindLabel(kind: Kind, mode: Mode): string {
-  if (kind.type === "chat") return "chat";
-  if (kind.type === "agent") return `agent ${kind.name} · ${kind.submode}`;
-  return mode;
-}
-
-/** The divider written when a conversation of that kind begins. */
-const kindHeader = (kind: Kind, mode: Mode, model: string): string =>
-  kind.type === "code" ? `code · ${mode} · ${model}` : `${kindLabel(kind, mode)} · ${model}`;
 
 export interface SuggestedRule {
   tool: string;
@@ -220,15 +200,6 @@ interface Turn {
   hub: HubChat | null;
   /** Text was streamed since the last round (a round's text is then on screen). */
   streamed: boolean;
-}
-
-/** agent.check's answer (bridge _h_agent_check). */
-interface AgentCheck {
-  ok?: boolean;
-  reason?: string;
-  context?: number;
-  context_note?: string;
-  agent?: AgentInfo;
 }
 
 export class Controller {
@@ -731,20 +702,11 @@ export class Controller {
         this.set({ ctx: { ...this.state.ctx, used } });
         break;
       }
-      case "knowledge": {
+      case "knowledge":
         // Which documents the answer can draw on, or why it can't.
         this.flush(turn);
-        const kb = (Array.isArray(data?.bases) ? data.bases : []).join(", ");
-        const sources: string[] = Array.isArray(data?.sources) ? data.sources.map(String) : [];
-        if (data?.error) this.error(`Knowledge (${kb}): ${data.error}`);
-        else if (data?.hits)
-          this.note(
-            `\u00b6 ${kb}: ${data.hits} excerpt${data.hits === 1 ? "" : "s"} from ${sources.slice(0, 3).join(", ")}` +
-              (sources.length > 3 ? "\u2026" : ""),
-          );
-        else this.note(`\u00b6 ${kb}: nothing relevant found.`);
+        this.write(fmtKnowledge(data, this.o.width()));
         break;
-      }
     }
   }
 
@@ -1438,27 +1400,6 @@ function normalizePlan(p: Partial<UndoPlan> | null | undefined): UndoPlan {
     shell_not_reverted: list(p?.shell_not_reverted),
     skipped: list(p?.skipped),
     applied: p?.applied === true,
-  };
-}
-
-/** What an AIhub turn's edit would change, as a diff for the prompt: AIhub
- *  shows the whole change before it is approved, and its permission_request
- *  carries only the tool's arguments (write_file {path, content}, edit_file
- *  {path, old, new}). */
-function hubDiff(name: string, args: unknown): DiffEvent | null {
-  if (name !== "write_file" && name !== "edit_file") return null;
-  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
-  const str = (v: unknown) => (typeof v === "string" ? v : "");
-  const rows = (v: unknown, sign: string) => (str(v) === "" ? [] : stripCR(str(v)).split("\n").map((l) => sign + sanitize(l)));
-  const path = sanitize(str(a.path)).replace(/\n/g, " ");
-  const removed = name === "edit_file" ? rows(a.old, "-") : [];
-  const added = rows(name === "edit_file" ? a.new : a.content, "+");
-  return {
-    path,
-    text: [`--- a/${path}`, `+++ b/${path}`, ...removed, ...added].join("\n"),
-    added: added.length,
-    removed: removed.length,
-    created: false,
   };
 }
 

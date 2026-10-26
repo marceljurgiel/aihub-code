@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { Args } from "../args";
 import { commandTable } from "../commands";
 import { memorySink } from "../scrollback";
-import { Controller, kindLabel } from "./controller";
+import { Controller } from "./controller";
+import { kindLabel } from "./kinds";
 import { MockBridge } from "./mock-bridge";
 
 const INFO = {
