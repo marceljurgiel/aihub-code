@@ -10,11 +10,11 @@
 import type { CliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { homedir } from "node:os";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Args } from "./args";
 import { SLASH_COMMANDS, commandTable } from "./commands";
 import { Footer } from "./footer/Footer";
-import { debounced, exitLine, footerBudget, messagesToLines } from "./replay";
+import { clampFooterHeight, debounced, exitLine, footerBudget, messagesToLines, userPrompts } from "./replay";
 import { Transcript, rendererSink, type RendererSink } from "./scrollback";
 import { Controller, type Bridge } from "./session/controller";
 
@@ -40,6 +40,27 @@ export interface LaunchOptions {
   onClosed?: (resumeLine: string | null) => void;
   /** How long a resize must be quiet before the replay. */
   resizeQuietMs?: number;
+  /** Where SIGTERM / SIGHUP arrive (the process; tests pass an emitter). */
+  proc?: { once(name: string, handler: () => void): unknown; off(name: string, handler: () => void): unknown };
+  /** Ends the process if closing after a signal hangs (default: process.exit). */
+  forceExit?: (code: number) => void;
+  /** How long a signal's shutdown may take before forceExit. */
+  forceExitMs?: number;
+}
+
+/** The prompts of a resumed session, for the footer's Up key. */
+class HistoryStore {
+  private items: readonly string[] = [];
+  private subs = new Set<() => void>();
+  get = (): readonly string[] => this.items;
+  set(items: string[]): void {
+    this.items = items;
+    for (const f of [...this.subs]) f();
+  }
+  subscribe = (f: () => void): (() => void) => {
+    this.subs.add(f);
+    return () => this.subs.delete(f);
+  };
 }
 
 export interface Launched {
@@ -67,8 +88,9 @@ function useTerminal(renderer: CliRenderer): { width: number; rows: number } {
   return size;
 }
 
-function FooterHost({ renderer, controller }: { renderer: CliRenderer; controller: Controller }) {
+function FooterHost({ renderer, controller, history }: { renderer: CliRenderer; controller: Controller; history: HistoryStore }) {
   const { width, rows } = useTerminal(renderer);
+  const prompts = useSyncExternalStore(history.subscribe, history.get);
   return (
     <Footer
       controller={controller}
@@ -77,9 +99,10 @@ function FooterHost({ renderer, controller }: { renderer: CliRenderer; controlle
       // The renderer's footer follows the content at once (layout effect), so a
       // taller footer is never drawn for a frame in a shorter area.
       onHeight={(n) => {
-        renderer.footerHeight = n;
+        renderer.footerHeight = clampFooterHeight(n, rows);
       }}
       commands={SLASH_COMMANDS}
+      history={prompts}
     />
   );
 }
@@ -91,6 +114,7 @@ export function launch(o: LaunchOptions): Launched {
   let resolveClosed!: () => void;
   const closed = new Promise<void>((r) => (resolveClosed = r));
   let done = false;
+  const prompts = new HistoryStore();
 
   // A resize leaves ghost footer rows behind: wait until it settles, clear,
   // and write the whole transcript again at the new width.
@@ -114,8 +138,30 @@ export function launch(o: LaunchOptions): Launched {
     cwd: o.cwd,
     home: o.home ?? homedir(),
     commands: commandTable(),
-    onResume: (messages) => sink.write(messagesToLines(messages, renderer.width)),
+    onResume: (messages) => {
+      sink.write(messagesToLines(messages, renderer.width));
+      prompts.set(userPrompts(messages));
+    },
     onExit: () => shutdown(),
+  });
+
+  // The renderer's own exit-signal handler only destroys the renderer (and the
+  // default "terminate" is gone once a handler exists): close everything, and
+  // end the process if that hangs. The timer is unref'd, so it never keeps a
+  // process alive that is already done.
+  const proc = o.proc ?? process;
+  const signals = [
+    ["SIGTERM", 143],
+    ["SIGHUP", 129],
+  ] as const;
+  const handlers = signals.map(([name, code]) => {
+    const h = () => {
+      const timer = setTimeout(() => (o.forceExit ?? ((c: number) => process.exit(c)))(code), o.forceExitMs ?? 2000);
+      timer.unref?.();
+      shutdown();
+    };
+    proc.once(name, h);
+    return [name, h] as const;
   });
 
   function shutdown(): void {
@@ -123,14 +169,24 @@ export function launch(o: LaunchOptions): Launched {
     done = true;
     replay.cancel();
     const line = exitLine(controller.resumableSessionId());
-    renderer.footerHeight = 1; // destroy leaves the footer's rows blank: keep that to one
-    renderer.destroy(); // restores the terminal; the transcript stays in the scrollback
-    bridge.destroy();
-    o.onClosed?.(line);
-    resolveClosed();
+    for (const [name, h] of handlers) proc.off(name, h);
+    try {
+      // Core's own signal handler may have destroyed the renderer already.
+      if (!renderer.isDestroyed) {
+        renderer.footerHeight = 1; // destroy leaves the footer's rows blank: keep that to one
+        renderer.destroy(); // restores the terminal; the transcript stays in the scrollback
+      }
+    } finally {
+      try {
+        bridge.destroy();
+      } finally {
+        o.onClosed?.(line);
+        resolveClosed();
+      }
+    }
   }
 
-  createRoot(renderer).render(<FooterHost renderer={renderer} controller={controller} />);
+  createRoot(renderer).render(<FooterHost renderer={renderer} controller={controller} history={prompts} />);
   void controller.start(o.args);
   return { controller, sink, transcript, closed, shutdown };
 }

@@ -70,9 +70,17 @@ export function Footer(props: FooterProps) {
   const [interrupted, setInterrupted] = useState(false);
   const interruptedRef = useRef(false);
   const history = useRef<string[]>([...(props.history ?? [])]);
+  const typedHere = useRef<string[]>([]); // prompts sent from this footer, kept when `history` is replaced
   const pos = useRef(-1); // -1: not walking the history
   const [, tick] = useState(0);
   const [noting, setNoting] = useState(false); // the permission prompt's inline input is open
+
+  // A resumed session's prompts arrive after the footer is up: they go first,
+  // what was typed here since stays after them.
+  useEffect(() => {
+    history.current = [...(props.history ?? []), ...typedHere.current].slice(-HISTORY_MAX);
+    pos.current = -1;
+  }, [props.history]);
 
   const asking = st.phase === "permission" && st.permission !== null;
   const picking = st.picker !== null;
@@ -163,7 +171,10 @@ export function Footer(props: FooterProps) {
     const text = ta.plainText.trim();
     if (text === "") return;
     const h = history.current;
-    if (h[h.length - 1] !== text) h.push(text);
+    if (h[h.length - 1] !== text) {
+      h.push(text);
+      typedHere.current.push(text);
+    }
     if (h.length > HISTORY_MAX) h.shift();
     pos.current = -1;
     ta.setText("");
@@ -259,7 +270,7 @@ export function Footer(props: FooterProps) {
   const inner = maxHeight === undefined ? Infinity : Math.max(1, maxHeight - 4);
   const suggestRows = Math.min(MAX_SUGGESTIONS, matches.length, Math.max(0, inner - 1));
   const inputRows = Math.max(1, Math.min(rows, inner - suggestRows));
-  const maxDiff = asking ? inner - 1 - (st.permission!.suggestedRule ? 3 : 2) : undefined;
+  const maxDiff = asking ? Math.max(0, inner - 1 - (st.permission!.suggestedRule ? 3 : 2)) : undefined;
   const permLayout = asking ? permissionLayout(st.permission!, Math.max(1, width - 4), 0, false, maxDiff) : null;
   const boxRows = permLayout
     ? permLayout.rows + 2

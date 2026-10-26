@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { Args } from "./args";
 import { launch, type Launched } from "./app";
@@ -28,7 +29,7 @@ afterEach(() => {
   open = undefined;
 });
 
-async function run(o: { width?: number; height?: number; args?: Partial<Args>; answers?: Record<string, unknown> } = {}) {
+async function run(o: { width?: number; height?: number; args?: Partial<Args>; answers?: Record<string, unknown>; launch?: Partial<Parameters<typeof launch>[0]> } = {}) {
   const setup = await createTestRenderer({
     width: o.width ?? 60,
     height: o.height ?? 20,
@@ -52,7 +53,7 @@ async function run(o: { width?: number; height?: number; args?: Partial<Args>; a
   bridge.answers["code.mode"] = (p: Record<string, unknown>) => ({ mode: p.mode });
   Object.assign(bridge.answers, o.answers ?? {});
   const closed: (string | null)[] = [];
-  const app = launch({ renderer: setup.renderer, bridge, args: { ...ARGS, ...o.args }, cwd: "/home/alex/proj", home: "/home/alex", onClosed: (l) => closed.push(l), resizeQuietMs: 30 });
+  const app = launch({ renderer: setup.renderer, bridge, args: { ...ARGS, ...o.args }, cwd: "/home/alex/proj", home: "/home/alex", onClosed: (l) => closed.push(l), resizeQuietMs: 30, ...o.launch });
   open = { setup, app };
   const settle = async () => {
     for (let i = 0; i < 4; i++) {
@@ -180,5 +181,83 @@ describe("the app on a split-footer renderer", () => {
     const t = await run({ answers: { "code.start": new Error("no model") } });
     t.app.shutdown();
     expect(t.closed).toEqual([null]);
+  });
+});
+
+describe("leaving", () => {
+  test("SIGTERM and SIGHUP close the app cleanly, and the process is ended if that hangs", async () => {
+    for (const signal of ["SIGTERM", "SIGHUP"] as const) {
+      const proc = new EventEmitter();
+      const forced: number[] = [];
+      const t = await run({ launch: { proc, forceExit: (c) => forced.push(c), forceExitMs: 20 } });
+      proc.emit(signal);
+      await t.app.closed;
+      expect(t.closed).toHaveLength(1);
+      expect(proc.listenerCount("SIGTERM") + proc.listenerCount("SIGHUP")).toBe(0);
+      await sleep(60);
+      expect(forced).toEqual([signal === "SIGTERM" ? 143 : 129]);
+      open?.setup.renderer.destroy();
+      open = undefined;
+    }
+  });
+
+  test("a renderer that core already destroyed (its own signal handler runs first) is not touched again", async () => {
+    const proc = new EventEmitter();
+    const t = await run({ launch: { proc, forceExit: () => {}, forceExitMs: 5000 } });
+    t.setup.renderer.destroy();
+    expect(() => proc.emit("SIGTERM")).not.toThrow();
+    expect(t.closed).toHaveLength(1);
+    expect((t.bridge as unknown as AppBridge).destroyed).toBe(1);
+  });
+
+  test("a normal exit never forces the process", async () => {
+    const proc = new EventEmitter();
+    const forced: number[] = [];
+    const t = await run({ launch: { proc, forceExit: (c) => forced.push(c), forceExitMs: 20 } });
+    t.app.controller.exit();
+    await sleep(60);
+    expect(forced).toEqual([]);
+    expect(proc.listenerCount("SIGTERM")).toBe(0);
+  });
+
+  test("the bridge is closed and the app reports closed even when the renderer cannot be destroyed", async () => {
+    const t = await run();
+    const real = t.setup.renderer.destroy.bind(t.setup.renderer);
+    t.setup.renderer.destroy = () => {
+      real();
+      throw new Error("terminal gone");
+    };
+    expect(() => t.app.shutdown()).toThrow("terminal gone");
+    expect((t.bridge as unknown as AppBridge).destroyed).toBe(1);
+    expect(t.closed).toHaveLength(1);
+    await t.app.closed;
+    t.setup.renderer.destroy = real; // afterEach destroys it again
+  });
+});
+
+describe("history from a resumed session", () => {
+  test("Up brings back the prompts of the saved conversation, newest first", async () => {
+    const t = await run({
+      args: { resume: "s9" },
+      answers: {
+        "code.resume": {
+          ...INFO,
+          session_id: "s9",
+          messages: [
+            { role: "system", content: "s" },
+            { role: "user", content: "first prompt" },
+            { role: "assistant", content: "ok" },
+            { role: "user", content: "second prompt" },
+            { role: "assistant", content: "done" },
+          ],
+        },
+      },
+    });
+    t.setup.mockInput.pressArrow("up");
+    await t.settle();
+    expect(t.frame()).toContain("> second prompt");
+    t.setup.mockInput.pressArrow("up");
+    await t.settle();
+    expect(t.frame()).toContain("> first prompt");
   });
 });

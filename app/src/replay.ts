@@ -39,6 +39,18 @@ function resultLines(ev: ToolResultEvent, width: number): Line[] {
   return said ? [[{ text: `  ${G.elbow} ` }, { text: said, dim: true }]] : [];
 }
 
+/** A user message that is the engine's own note, not something the user typed. */
+const isEngineNote = (content: string): boolean => content.startsWith(SUMMARY_PREFIX) || content === UNDONE_NOTE;
+
+/** What the user typed in a saved conversation, oldest first (the prompt's Up history). */
+export function userPrompts(messages: unknown[]): string[] {
+  const out: string[] = [];
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (isObject(m) && m.role === "user" && typeof m.content === "string" && m.content.trim() !== "" && !isEngineNote(m.content)) out.push(m.content);
+  }
+  return out;
+}
+
 /**
  * A resumed session's saved messages as transcript lines, laid out like a live
  * turn: `>` prompts, markdown replies, a tool line with its result under it.
@@ -112,3 +124,8 @@ export const footerBudget = (terminalRows: number): number => Math.max(MIN_FOOTE
 /** What is printed after the terminal is restored; null when there is nothing to resume. */
 export const exitLine = (sessionId: string): string | null =>
   sessionId ? `Resume this session: aihub-code --resume ${sessionId}` : null;
+
+/** The renderer's footer height: as asked, but on a terminal under 6 rows
+ *  always one row less than the terminal (never below 1). */
+export const clampFooterHeight = (rows: number, terminalRows: number): number =>
+  terminalRows < 6 ? Math.max(1, Math.min(rows, terminalRows - 1)) : rows;

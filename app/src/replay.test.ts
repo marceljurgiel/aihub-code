@@ -6,7 +6,7 @@ import { MockBridge } from "./session/mock-bridge";
 import { commandTable } from "./commands";
 import { Transcript, memorySink, rendererSink } from "./scrollback";
 import { lineText } from "./width";
-import { debounced, exitLine, footerBudget, messagesToLines } from "./replay";
+import { clampFooterHeight, debounced, exitLine, footerBudget, messagesToLines, userPrompts } from "./replay";
 
 const text = (lines: ReturnType<typeof messagesToLines>) => lines.map(lineText);
 
@@ -242,5 +242,35 @@ describe("a resize while a reply streams", () => {
     } finally {
       setup.renderer.destroy();
     }
+  });
+});
+
+describe("userPrompts (history of a resumed session)", () => {
+  test("the user's prompts in order, without the system prompt, notes or tool output", () => {
+    expect(
+      userPrompts([
+        { role: "system", content: "s" },
+        { role: "user", content: "first" },
+        { role: "assistant", content: "a" },
+        { role: "user", content: "[Conversation summary]\n## Goal" },
+        { role: "user", content: "[The user undid the file changes of that turn.]" },
+        { role: "tool", content: "t" },
+        { role: "user", content: "second" },
+        null,
+        { role: "user", content: 3 },
+      ]),
+    ).toEqual(["first", "second"]);
+  });
+});
+
+describe("clampFooterHeight", () => {
+  test("the footer is as tall as asked on a normal terminal", () => {
+    expect(clampFooterHeight(9, 30)).toBe(9);
+    expect(clampFooterHeight(9, 6)).toBe(9);
+  });
+  test("below 6 rows it stays under the terminal's height, never below 1", () => {
+    expect(clampFooterHeight(8, 5)).toBe(4);
+    expect(clampFooterHeight(8, 2)).toBe(1);
+    expect(clampFooterHeight(8, 0)).toBe(1);
   });
 });
