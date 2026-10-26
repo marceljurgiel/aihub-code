@@ -896,13 +896,17 @@ export class Controller {
     await this.replaceSession(() => this.resume(id));
   }
 
+  /** The session worth resuming: one something was said in (or that was itself
+   *  resumed). Empty otherwise. The app prints the resume line from this once
+   *  the terminal is restored. */
+  resumableSessionId(): string {
+    return this.state.sessionId && (this.turnsSent > 0 || this.resumed) ? this.state.sessionId : "";
+  }
+
   exit(): void {
     if (this.exited) return;
     this.exited = true;
     if (this.turn) this.cancel();
-    if (this.state.sessionId && (this.turnsSent > 0 || this.resumed)) {
-      this.note(`Resume this session: aihub-code --resume ${this.state.sessionId}`);
-    }
     this.o.onExit?.();
   }
 }

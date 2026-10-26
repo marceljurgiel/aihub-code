@@ -20,10 +20,10 @@ export function slashMatches(text: string, commands: readonly SlashCommand[]): S
 
 export const MAX_SUGGESTIONS = 5;
 
-/** The rows to draw: a window of at most MAX_SUGGESTIONS around the highlight. */
-export function suggestWindow<T>(items: readonly T[], highlight: number): { rows: T[]; start: number } {
-  const start = Math.max(0, Math.min(highlight - MAX_SUGGESTIONS + 1, items.length - MAX_SUGGESTIONS));
-  return { rows: items.slice(start, start + MAX_SUGGESTIONS), start };
+/** The rows to draw: a window of at most `max` (MAX_SUGGESTIONS) around the highlight. */
+export function suggestWindow<T>(items: readonly T[], highlight: number, max = MAX_SUGGESTIONS): { rows: T[]; start: number } {
+  const start = Math.max(0, Math.min(highlight - max + 1, items.length - max));
+  return { rows: items.slice(start, start + max), start };
 }
 
 export function suggestLine(c: SlashCommand, selected: boolean, nameWidth: number, width: number): Line {
@@ -37,8 +37,8 @@ export function suggestLine(c: SlashCommand, selected: boolean, nameWidth: numbe
   ];
 }
 
-export function SlashSuggest({ items, highlight, width }: { items: readonly SlashCommand[]; highlight: number; width: number }) {
-  const { rows, start } = suggestWindow(items, highlight);
+export function SlashSuggest({ items, highlight, width, maxRows = MAX_SUGGESTIONS }: { items: readonly SlashCommand[]; highlight: number; width: number; maxRows?: number }) {
+  const { rows, start } = suggestWindow(items, highlight, maxRows);
   const nameWidth = Math.max(...items.map((c) => c.name.length + 1));
   return (
     <box flexDirection="column" flexShrink={0}>

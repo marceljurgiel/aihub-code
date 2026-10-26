@@ -706,20 +706,22 @@ describe("commands, exit, subscribe", () => {
     expect(sink.styled[0]![0]!.dim).toBe(true);
   });
 
-  test("exit cancels a running turn, prints how to resume, and calls onExit", async () => {
+  test("exit cancels a running turn and calls onExit; the session is then resumable", async () => {
     const { c, exits, sink, bridge, turn } = await running();
     c.exit();
     expect(bridge.controls).toEqual([{ method: "chat.cancel", params: { request_id: turn.id } }]);
-    expect(sink.lines.at(-1)).toBe("Resume this session: aihub-code --resume s1");
+    // The app prints the resume line itself once the terminal is restored.
+    expect(sink.lines.some((l) => l.startsWith("Resume"))).toBe(false);
+    expect(c.resumableSessionId()).toBe("s1");
     expect(exits).toEqual(["exit"]);
     c.exit();
     expect(exits).toEqual(["exit"]);
   });
 
-  test("exit before any prompt prints no resume line", async () => {
-    const { c, sink, exits } = await started();
+  test("a session nothing was said in is not offered for resume", async () => {
+    const { c, exits } = await started();
+    expect(c.resumableSessionId()).toBe("");
     c.exit();
-    expect(sink.lines.some((l) => l.startsWith("Resume"))).toBe(false);
     expect(exits).toEqual(["exit"]);
   });
 

@@ -904,3 +904,74 @@ describe("narrow terminals", () => {
     expect(m.lines().at(-1)).toContain("build");
   });
 });
+
+describe("footer clamp (maxHeight)", () => {
+  const BIG = {
+    path: "c.py",
+    text: "--- a/c\n+++ b/c\n@@\n" + Array.from({ length: 40 }, (_, i) => `+line ${i}`).join("\n"),
+    added: 40,
+    removed: 0,
+    created: false,
+  };
+  const models = (n: number) => ({ models: Array.from({ length: n }, (_, i) => ({ name: `model-${i}` })) });
+
+  test("a tall input stops growing at the budget and keeps the box and status line", async () => {
+    m = await mount({ maxHeight: 8 });
+    await type(m, "a");
+    for (let i = 0; i < 10; i++) {
+      await enter(m, { shift: true });
+      await type(m, "x");
+    }
+    expect(m.heights.at(-1)).toBe(8);
+    expect(m.lines().length).toBe(8);
+    expect(m.lines().at(-1)).toContain("shift+tab mode");
+  });
+
+  test("a permission diff shrinks to fit; title, every option and the ellipsis row stay", async () => {
+    m = await running({ maxHeight: 12 });
+    m.bridge.lastStream.emit("permission_request", PERM(1, { diff: BIG }));
+    await m.settle();
+    expect(m.heights.at(-1)).toBeLessThanOrEqual(12);
+    expect(m.lines().length).toBe(m.heights.at(-1)!);
+    const t = text(m);
+    expect(t).toContain("Allow edit_file calc.py?");
+    expect(t).toContain("1. Yes");
+    expect(t).toContain("2. Yes, and don't ask again");
+    expect(t).toContain("3. No, and tell the model");
+    expect(t).toMatch(/\+\d+ lines/);
+  });
+
+  test("a budget below what the prompt needs: the options win over the diff, nothing is squeezed", async () => {
+    m = await running({ maxHeight: 6 });
+    m.bridge.lastStream.emit("permission_request", PERM(1, { diff: BIG }));
+    await m.settle();
+    const t = text(m);
+    expect(t).toContain("3. No, and tell the model");
+    expect(m.lines().length).toBe(m.heights.at(-1)!);
+  });
+
+  test("the picker lists fewer rows in a short terminal", async () => {
+    const x = await mount({ start: false, maxHeight: 9, answers: { "config.get": {}, "models.installed": models(12) } });
+    m = x;
+    await x.c.start({ cont: false, mcp: [], kb: [] });
+    await x.settle();
+    expect(x.heights.at(-1)).toBeLessThanOrEqual(9);
+    expect(x.lines().length).toBe(x.heights.at(-1)!);
+    const t = text(x);
+    expect(t).toContain("Choose a model");
+    expect(t).toContain("model-0");
+    expect(t).not.toContain("model-7");
+    expect(t).toContain("12 of 12");
+    // the cursor still scrolls through the shorter window
+    for (let i = 0; i < 6; i++) await arrow(x, "down");
+    expect(text(x)).toContain(`${G.pointer} model-6`);
+  });
+
+  test("slash suggestions give way first", async () => {
+    const commands = Array.from({ length: 6 }, (_, i) => ({ name: `cmd${i}`, hint: "x" }));
+    m = await mount({ maxHeight: 6, commands });
+    await type(m, "/");
+    expect(m.heights.at(-1)).toBe(6);
+    expect(m.lines().length).toBe(6);
+  });
+});

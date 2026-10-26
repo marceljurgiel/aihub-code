@@ -26,20 +26,29 @@ export interface PickerLayout {
   summary: string | null;
 }
 
-/** Rows a picker with `n` items always shows (not the matches: steady height). */
-export const pickerRowCount = (n: number): number => Math.min(MAX_PICKER_ROWS, Math.max(1, n));
+/** Rows a picker with `n` items always shows (not the matches: steady height).
+ * `inner` is the room inside the box: a short terminal shows fewer list rows
+ * (never fewer than one). */
+export function pickerRowCount(n: number, inner = Infinity): number {
+  let v = Math.min(MAX_PICKER_ROWS, Math.max(1, n));
+  while (v > 1 && 2 + v + (n > v ? 1 : 0) > inner) v--;
+  return v;
+}
 
 /** Rows inside the box: title, filter line, the list, a count when it scrolls. */
-export const pickerInnerRows = (n: number): number => 2 + pickerRowCount(n) + (n > MAX_PICKER_ROWS ? 1 : 0);
+export const pickerInnerRows = (n: number, inner = Infinity): number => {
+  const v = pickerRowCount(n, inner);
+  return 2 + v + (n > v ? 1 : 0);
+};
 
-export function pickerLayout(items: readonly PickerItem[], filter: string, cursor: number, top: number, width: number): PickerLayout {
+export function pickerLayout(items: readonly PickerItem[], filter: string, cursor: number, top: number, width: number, inner = Infinity): PickerLayout {
   const words = oneLine(filter).toLowerCase().split(/\s+/).filter(Boolean);
   const labelOf = (i: PickerItem) => oneLine(i.label);
   const matches = items.filter((i) => {
     const hay = `${labelOf(i)} ${oneLine(i.id)}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
-  const V = pickerRowCount(items.length);
+  const V = pickerRowCount(items.length, inner);
   const at = Math.max(0, Math.min(cursor, matches.length - 1));
   let from = Math.max(0, Math.min(top, Math.max(0, matches.length - V)));
   if (at < from) from = at;
@@ -53,7 +62,7 @@ export function pickerLayout(items: readonly PickerItem[], filter: string, curso
   });
   if (matches.length === 0) rows.push([{ text: items.length === 0 ? "nothing to choose from" : "no match", dim: true }]);
   while (rows.length < V) rows.push([]);
-  return { matches, rows, top: from, cursor: at, summary: items.length > MAX_PICKER_ROWS ? `${matches.length} of ${items.length}` : null };
+  return { matches, rows, top: from, cursor: at, summary: items.length > V ? `${matches.length} of ${items.length}` : null };
 }
 
 export function Picker({
@@ -62,6 +71,7 @@ export function Picker({
   onPick,
   now = Date.now,
   guardMs = 250,
+  maxInner = Infinity,
 }: {
   picker: PickerState;
   width: number;
@@ -70,13 +80,15 @@ export function Picker({
   /** Choosing and cancelling keys are ignored this long after the picker opens:
    *  a typed-ahead Enter must not pick, a typed-ahead Esc must not cancel. */
   guardMs?: number;
+  /** Rows available inside the box (a short terminal). */
+  maxInner?: number;
 }) {
   const inner = Math.max(1, width - 4);
   const [filter, setFilter] = useState("");
   const [cursor, setCursor] = useState(0);
   const top = useRef(0);
   const shownAt = useRef(now());
-  const layout = pickerLayout(picker.items, filter, cursor, top.current, inner);
+  const layout = pickerLayout(picker.items, filter, cursor, top.current, inner, maxInner);
   top.current = layout.top;
   const live = useRef({ matches: layout.matches, cursor: layout.cursor, onPick });
   live.current = { matches: layout.matches, cursor: layout.cursor, onPick };
@@ -117,7 +129,7 @@ export function Picker({
       paddingLeft={1}
       paddingRight={1}
       width={width}
-      height={pickerInnerRows(picker.items.length) + 2}
+      height={pickerInnerRows(picker.items.length, maxInner) + 2}
       flexShrink={0}
     >
       <LineText line={[{ text: truncate(oneLine(picker.title), inner), bold: true }]} />

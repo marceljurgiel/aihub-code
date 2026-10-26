@@ -33,6 +33,9 @@ export interface FooterProps {
   /** A sent prompt (Enter). Task 7 routes /commands here; the default queues it. */
   onSubmit?: (text: string) => void;
   commands?: readonly SlashCommand[];
+  /** The most rows the footer may take: a short terminal keeps room for the
+   *  transcript. Suggestions, input rows, picker rows and diff rows give way. */
+  maxHeight?: number;
   /** Earlier prompts, oldest first (a resumed session's, for Up). */
   history?: readonly string[];
   /** Milliseconds; injectable for tests. */
@@ -52,7 +55,7 @@ const HINTS = {
 };
 
 export function Footer(props: FooterProps) {
-  const { controller, width, onHeight, commands = [], now = Date.now, guardMs = 250, ctrlCWindowMs = 2000 } = props;
+  const { controller, width, onHeight, commands = [], maxHeight, now = Date.now, guardMs = 250, ctrlCWindowMs = 2000 } = props;
   const st = useController(controller);
   const inputRef = useRef<TextareaRenderable | null>(null);
   const [rows, setRows] = useState(1);
@@ -251,17 +254,24 @@ export function Footer(props: FooterProps) {
 
   // ── what to draw, and how tall that is ───────────────────────────────────
 
-  const suggestRows = Math.min(MAX_SUGGESTIONS, matches.length);
-  const permLayout = asking ? permissionLayout(st.permission!, Math.max(1, width - 4), 0, false) : null;
+  // Rows left inside the box once the gap line, the status line and the borders
+  // are counted (no limit without maxHeight).
+  const inner = maxHeight === undefined ? Infinity : Math.max(1, maxHeight - 4);
+  const suggestRows = Math.min(MAX_SUGGESTIONS, matches.length, Math.max(0, inner - 1));
+  const inputRows = Math.max(1, Math.min(rows, inner - suggestRows));
+  const maxDiff = asking ? inner - 1 - (st.permission!.suggestedRule ? 3 : 2) : undefined;
+  const permLayout = asking ? permissionLayout(st.permission!, Math.max(1, width - 4), 0, false, maxDiff) : null;
   const boxRows = permLayout
     ? permLayout.rows + 2
     : picking
-      ? pickerInnerRows(st.picker!.items.length) + 2
+      ? pickerInnerRows(st.picker!.items.length, inner) + 2
       : confirming
         ? CONFIRM_ROWS + 2
-        : rows + 2;
+        : inputRows + 2;
   const height = 1 + boxRows + suggestRows + 1;
-  useEffect(() => {
+  // A layout effect: the renderer's footer area is resized in the same commit as
+  // the content, not a frame later (a taller footer in a shorter area is squeezed).
+  useLayoutEffect(() => {
     onHeight?.(height);
   }, [height]);
 
@@ -291,23 +301,24 @@ export function Footer(props: FooterProps) {
           guardMs={guardMs}
           onEditing={setNoting}
           onInterrupt={interrupt}
+          maxDiff={maxDiff}
         />
       ) : picking ? (
-        <Picker picker={st.picker!} width={width} now={now} guardMs={guardMs} onPick={(id) => void controller.pick(id)} />
+        <Picker picker={st.picker!} width={width} now={now} guardMs={guardMs} onPick={(id) => void controller.pick(id)} maxInner={inner} />
       ) : confirming ? (
         <ConfirmPrompt confirm={st.confirm!} width={width} now={now} guardMs={guardMs} onAnswer={(yes) => void controller.answerConfirm(yes)} />
       ) : (
         <PromptBox
           width={width}
           mode={st.mode}
-          rows={rows}
+          rows={inputRows}
           inputRef={inputRef}
           initialValue={lastText.current}
           onContentChange={sync}
           onSubmit={send}
         />
       )}
-      {suggestRows > 0 ? <SlashSuggest items={matches} highlight={hiNow} width={width} /> : null}
+      {suggestRows > 0 ? <SlashSuggest items={matches} highlight={hiNow} width={width} maxRows={suggestRows} /> : null}
       <StatusLine input={status} width={width} />
     </box>
   );

@@ -1,21 +1,34 @@
 import { createCliRenderer } from "@opentui/core";
-import { createRoot } from "@opentui/react";
+import { IDLE_FOOTER_ROWS, launch } from "./app";
+import { parseArgs } from "./args";
+import { BridgeClient } from "./bridge/client";
+import { applyConfigAccent } from "./theme";
 
 // A split-footer renderer: the transcript is written to the terminal's own
-// scrollback, only this footer is redrawn. Printed output (console.log, stray
+// scrollback, only the footer is redrawn. Printed output (console.log, stray
 // stdout) is captured and routed above the footer instead of tearing it.
 // exitOnCtrlC: false and no process.exit(): quitting is renderer.destroy(),
 // which restores the terminal (a hard exit would leave it in raw mode).
+// clearOnShutdown: false keeps the visible transcript for the shell.
+applyConfigAccent();
 const renderer = await createCliRenderer({
   screenMode: "split-footer",
-  footerHeight: 1,
+  footerHeight: IDLE_FOOTER_ROWS,
   externalOutputMode: "capture-stdout",
   exitOnCtrlC: false,
+  clearOnShutdown: false,
 });
 
-renderer.keyInput.on("keypress", (key) => {
-  if (key.ctrl && key.name === "c") renderer.destroy();
-});
+const bridge = new BridgeClient();
+bridge.start();
 
-// Placeholder footer; the real one arrives with the prompt (task 4).
-createRoot(renderer).render(<text>aihub-code</text>);
+launch({
+  renderer,
+  bridge,
+  args: parseArgs(process.env),
+  cwd: process.cwd(),
+  // After the terminal is restored: a plain line in the shell, not in the transcript.
+  onClosed: (line) => {
+    if (line) process.stdout.write(`${line}\n`);
+  },
+});

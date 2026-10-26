@@ -58,6 +58,8 @@ export interface MountOptions {
   history?: string[];
   guardMs?: number;
   ctrlCWindowMs?: number;
+  /** The most rows the footer may take (the app passes the terminal's budget). */
+  maxHeight?: number;
   /** The terminal speaks the kitty keyboard protocol (default); false: legacy keys. */
   kitty?: boolean;
   /** Start the session (default); false leaves the controller as constructed. */
@@ -103,6 +105,7 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
       now={() => clock.t}
       guardMs={o.guardMs ?? 0}
       ctrlCWindowMs={o.ctrlCWindowMs}
+      maxHeight={o.maxHeight}
     />
   );
   const setup = await testRender(o.wrap ? o.wrap(footer) : footer, {

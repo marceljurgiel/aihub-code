@@ -68,12 +68,13 @@ export interface PermissionLayout {
 
 /** What the prompt draws, row by row; `cursor` indexes `options`. In `editing`
  * mode the last option is only its prefix: the input goes after it. */
-export function permissionLayout(p: PermissionState, width: number, cursor: number, editing: boolean): PermissionLayout {
+export function permissionLayout(p: PermissionState, width: number, cursor: number, editing: boolean, maxDiff = MAX_DIFF_ROWS): PermissionLayout {
   const title: Line = [{ text: permissionTitle(p, width), bold: true }];
   let diff: Line[] = [];
-  if (p.diff) {
-    diff = fmtDiff(p.diff, width, MAX_DIFF_ROWS);
-    if (diff.length > MAX_DIFF_ROWS) diff = fmtDiff(p.diff, width, MAX_DIFF_ROWS - 1);
+  const room = Math.min(MAX_DIFF_ROWS, maxDiff);
+  if (p.diff && room > 0) {
+    diff = fmtDiff(p.diff, width, room);
+    if (diff.length > room) diff = fmtDiff(p.diff, width, room - 1);
   }
   const labels: { kind: PermissionChoiceKind; label: string }[] = [{ kind: "yes", label: "Yes" }];
   if (p.suggestedRule) {
@@ -110,13 +111,15 @@ export interface PermissionPromptProps {
   onEditing?: (editing: boolean) => void;
   /** Ctrl+C: the footer interrupts the turn (and remembers that it did). */
   onInterrupt?: () => void;
+  /** Diff rows the terminal leaves room for (default: MAX_DIFF_ROWS). */
+  maxDiff?: number;
 }
 
-export function PermissionPrompt({ controller, permission: p, width, now, guardMs, onEditing, onInterrupt }: PermissionPromptProps) {
+export function PermissionPrompt({ controller, permission: p, width, now, guardMs, onEditing, onInterrupt, maxDiff }: PermissionPromptProps) {
   const inner = Math.max(1, width - 4);
   const [cursor, setCursor] = useState(0);
   const [editing, setEditing] = useState(false);
-  const layout = permissionLayout(p, inner, cursor, editing);
+  const layout = permissionLayout(p, inner, cursor, editing, maxDiff);
   const shownAt = useRef(now());
   // Always the prompt on screen, read at key time (keys can outrun renders).
   const live = useRef({ p, cursor: 0, editing: false, offered: layout.options.map((o) => o.kind) });
