@@ -1413,7 +1413,8 @@ export class Controller {
     } finally {
       this.optsBusy = false;
       // A turn that started meanwhile ends in drainQueue, which comes back here.
-      if (this.pendingOpts && this.canFlushOptions()) this.drainQueue();
+      // The queue waited behind the change: let it go now.
+      if (this.canFlushOptions()) this.drainQueue();
     }
   }
 
@@ -1643,14 +1644,20 @@ export class Controller {
     this.exited = true;
     this.learner.cancel(); // AIhub's quit drops a pending learn too
     const turn = this.turn;
-    if (!turn?.handle) return this.o.onExit?.();
-    this.cancel();
+    if (!turn?.handle && !this.pendingOpts) return this.o.onExit?.();
+    if (turn?.handle) this.cancel();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const grace = new Promise<void>((r) => (timer = setTimeout(r, this.o.exitGraceMs ?? 1500)));
-    void Promise.race([turn.handle.done.then(noop, noop), grace]).then(() => {
+    void (async () => {
+      if (turn?.handle) await Promise.race([turn.handle.done.then(noop, noop), grace]);
+      // A /kb or /mcp change still waiting is applied (and saved) before leaving.
+      if (this.pendingOpts) {
+        if (this.canFlushOptions()) await Promise.race([this.flushOptions(), grace]);
+        if (this.pendingOpts) this.note("The /kb and /mcp change was not applied \u2014 the session ended first.");
+      }
       clearTimeout(timer);
       this.o.onExit?.();
-    });
+    })();
   }
 }
 

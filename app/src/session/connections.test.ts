@@ -27,7 +27,7 @@ const settle = async () => {
   for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
 };
 
-async function started(args: Partial<Args> = {}, info: Record<string, unknown> = {}) {
+async function started(args: Partial<Args> = {}, info: Record<string, unknown> = {}, onExit?: () => void, exitGraceMs?: number) {
   const bridge = new MockBridge();
   bridge.answers["config.get"] = { default_chat_model: "gemma4:cloud" };
   bridge.answers["code.start"] = (p: Record<string, unknown>) => ({ ...INFO, ...info, model: p.model });
@@ -37,7 +37,7 @@ async function started(args: Partial<Args> = {}, info: Record<string, unknown> =
   bridge.answers["chat.start"] = { messages: [{ role: "system", content: "s" }] };
   bridge.answers["mcp.list"] = { servers: [] };
   const sink = memorySink();
-  const c = new Controller({ bridge, sink, commands: commandTable(), now: () => 1000, width: () => 100, cwd: "/home/alex/proj", home: "/home/alex" });
+  const c = new Controller({ bridge, sink, commands: commandTable(), now: () => 1000, width: () => 100, cwd: "/home/alex/proj", home: "/home/alex", onExit, exitGraceMs });
   await c.start({ cont: false, mcp: [], kb: [], ...args });
   await c.refreshKb();
   await settle();
@@ -114,6 +114,65 @@ describe("/kb under the code agent", () => {
     expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"] } }]);
     expect(m.text()).toContain("¶ Using docs in this chat");
     expect(m.c.getState().knowledge).toEqual(["docs"]);
+  });
+
+  test("a prompt queued behind a waiting /kb change still goes out, after code.options", async () => {
+    const m = await started();
+    m.c.submit("fix it");
+    await settle();
+    await m.run("/kb docs");
+    await m.run("then this");
+    expect(m.c.getState().queue).toEqual(["then this"]);
+    m.bridge.lastStream.finish({});
+    await settle();
+    const order = m.bridge.calls.map((x) => x.method).filter((x) => x === "code.options" || x === "code.turn");
+    expect(order).toEqual(["code.turn", "code.options", "code.turn"]);
+    expect(m.bridge.lastStream.params).toEqual({ text: "then this" });
+    expect(m.c.getState().queue).toEqual([]);
+  });
+
+  test("an interrupt drops the queue but the /kb change still goes out", async () => {
+    const m = await started();
+    m.c.submit("fix it");
+    await settle();
+    await m.run("/kb docs");
+    await m.run("queued");
+    m.c.cancel();
+    expect(m.text()).toContain("dropped 1 queued prompt");
+    m.bridge.lastStream.finish({});
+    await settle();
+    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"] } }]);
+    expect(m.bridge.to("code.turn")).toHaveLength(1);
+    expect(m.c.getState().knowledge).toEqual(["docs"]);
+  });
+
+  test("/exit during a turn applies a waiting /kb change before leaving", async () => {
+    const exits: string[] = [];
+    const m = await started({}, {}, () => exits.push("exit"));
+    m.c.submit("fix it");
+    await settle();
+    await m.run("/kb docs");
+    await m.run("/exit");
+    await settle();
+    m.bridge.lastStream.finish({});
+    await settle();
+    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"] } }]);
+    expect(exits).toEqual(["exit"]);
+    const order = m.bridge.calls.map((x) => x.method);
+    expect(order.lastIndexOf("code.options")).toBeGreaterThan(order.lastIndexOf("code.turn"));
+  });
+
+  test("/exit when the turn never ends says the change was not applied", async () => {
+    const exits: string[] = [];
+    const m = await started({}, {}, () => exits.push("exit"), 20);
+    m.c.submit("fix it");
+    await settle();
+    await m.run("/kb docs");
+    await m.run("/exit");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(m.bridge.to("code.options")).toHaveLength(0);
+    expect(m.text()).toContain("The /kb and /mcp change was not applied");
+    expect(exits).toEqual(["exit"]);
   });
 
   test("a refused change is an error line, not silence", async () => {
