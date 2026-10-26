@@ -53,7 +53,7 @@ const PATH_KEYS: Record<string, string> = {
 };
 
 /** The one argument worth showing next to the tool name. */
-function mainArg(ev: ToolCallEvent): { text: string; path: boolean } {
+export function mainArg(ev: Pick<ToolCallEvent, "name" | "arguments">): { text: string; path: boolean } {
   const args = ev.arguments && typeof ev.arguments === "object" ? ev.arguments : {};
   const str = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : "");
   const key = PATH_KEYS[ev.name];

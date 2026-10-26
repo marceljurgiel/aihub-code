@@ -125,7 +125,7 @@ export type ScrollbackRenderer = Pick<CliRenderer, "width" | "createScrollbackSu
 
 const ROWS_PER_COMMIT = 500;
 
-function colour(fg: string | undefined): RGBA {
+export function colour(fg: string | undefined): RGBA {
   if (!fg) return RGBA.defaultForeground(); // the terminal's own text colour
   if (fg.startsWith("ansi:")) return RGBA.fromIndex(Number(fg.slice(5)));
   return RGBA.fromHex(fg);

@@ -15,6 +15,7 @@ describe("glyphs", () => {
     expect([g.tl, g.tr, g.bl, g.br]).toEqual(["╭", "╮", "╰", "╯"]);
     expect([g.h, g.v]).toEqual(["─", "│"]);
     expect(g.ellipsis).toBe("…");
+    expect(g.pointer).toBe("❯");
   });
 
   test("console-safe set swaps the characters the Windows fonts lack", () => {
@@ -25,6 +26,7 @@ describe("glyphs", () => {
     expect(g.boxOpen).toBe("[ ]");
     expect(g.boxDone).toBe("[x]");
     expect(g.cross).toBe("×");
+    expect(g.pointer).toBe(">"); // ❯ is not in Consolas
     expect([g.tl, g.tr, g.bl, g.br]).toEqual(["╭", "╮", "╰", "╯"]);
   });
 
