@@ -4,9 +4,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/marceljurgiel/aihub-code/main/install.sh | bash
 #
 # Installs aihub-code without root, in its own Python environment: uv (Python
-# 3.12), aihub-code and the AIhub engine it builds on (needs git), plus a
-# launcher at ~/.local/bin/aihub-code. It reads your AIhub settings
-# (~/.aihub) and never touches them. Re-running it updates aihub-code.
+# 3.12), aihub-code and the AIhub engine it builds on (needs git), Bun (it runs
+# the interactive terminal UI) plus a launcher at ~/.local/bin/aihub-code. It
+# reads your AIhub settings (~/.aihub) and never touches them. Re-running it
+# updates aihub-code.
 #
 # Options:
 #   --dir <path>   install directory (default: ~/.local/share/aihub-code)
@@ -82,10 +83,11 @@ install_source() {
   tar -xzf "$tmp/src.tar.gz" -C "$tmp/src" --strip-components=1 || die "the download is not a valid archive: $SOURCE"
   [ -f "$tmp/src/pyproject.toml" ] && [ -d "$tmp/src/aihub_code" ] || die "the archive does not look like aihub-code: $SOURCE"
   # Update: move the old install aside (nothing changes if that fails), keep
-  # its Python environment, swap the new source in.
+  # its Python environment and the app's packages, swap the new source in.
   if [ -d "$HOME_DIR" ]; then
     mv "$HOME_DIR" "$tmp/old" || die "could not move the old install aside ($HOME_DIR) - nothing was changed"
     [ -d "$tmp/old/.venv" ] && mv "$tmp/old/.venv" "$tmp/src/.venv"
+    [ -d "$tmp/old/app/node_modules" ] && mv "$tmp/old/app/node_modules" "$tmp/src/app/node_modules"
   fi
   mv "$tmp/src" "$HOME_DIR"
   ok "aihub-code $(version_of) -> $HOME_DIR"
@@ -108,6 +110,47 @@ install_engine() {
   [ -x "$HOME_DIR/.venv/bin/python" ] || "$uv" venv -q --python 3.12 "$HOME_DIR/.venv" || die "could not create the Python environment"
   "$uv" pip install -q --python "$HOME_DIR/.venv/bin/python" -e "$HOME_DIR" || die "could not install aihub-code and the AIhub engine"
   ok "aihub-code $("$HOME_DIR/.venv/bin/python" -c 'import aihub_code; print(aihub_code.__version__)'), AIhub engine $("$HOME_DIR/.venv/bin/python" -c 'import aihub; print(aihub.__version__)')"
+}
+
+bun_target() {
+  local os arch target
+  os="$(uname -s)"; arch="$(uname -m)"
+  case "$os" in Linux) os=linux ;; Darwin) os=darwin ;; *) die "unsupported system: $os" ;; esac
+  case "$arch" in x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=aarch64 ;; *) die "unsupported CPU: $arch" ;; esac
+  target="$os-$arch"
+  if [ "$os" = linux ]; then
+    if ldd --version 2>&1 | grep -qi musl || [ -f /etc/alpine-release ]; then target="$target-musl"; fi
+    if [ "$arch" = x64 ] && ! grep -qw avx2 /proc/cpuinfo 2>/dev/null; then target="$target-baseline"; fi
+  elif [ "$arch" = x64 ] && [ "$(sysctl -n hw.optional.avx2_0 2>/dev/null || echo 1)" = 0 ]; then
+    target="$target-baseline"
+  fi
+  printf '%s' "$target"
+}
+
+# Bun runs the interactive UI (app/). Found on PATH or in ~/.bun/bin, else
+# installed there (the same place aihub-code looks).
+install_app() {
+  step "Terminal UI"
+  BUN=""
+  if have bun; then BUN="$(command -v bun)"; elif [ -x "$HOME/.bun/bin/bun" ]; then BUN="$HOME/.bun/bin/bun"; fi
+  if [ -z "$BUN" ]; then
+    # The official installer needs `unzip`; unpacking with our own Python doesn't.
+    local target zip
+    target="$(bun_target)"; zip="$HOME_DIR/.bun.zip"
+    fetch "https://github.com/oven-sh/bun/releases/latest/download/bun-$target.zip" "$zip" || die "could not download Bun"
+    mkdir -p "$HOME/.bun/bin"
+    "$HOME_DIR/.venv/bin/python" - "$zip" "$target" "$HOME/.bun/bin/bun" <<'PY'
+import shutil, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z, z.open(f"bun-{sys.argv[2]}/bun") as src, open(sys.argv[3], "wb") as dst:
+    shutil.copyfileobj(src, dst)
+PY
+    chmod +x "$HOME/.bun/bin/bun"; rm -f "$zip"
+    BUN="$HOME/.bun/bin/bun"
+    ok "Bun $("$BUN" --version) installed"
+  fi
+  (cd "$HOME_DIR/app" && "$BUN" install --production --frozen-lockfile >/dev/null 2>&1) \
+    || (cd "$HOME_DIR/app" && "$BUN" install --production) || die "could not install the app's packages"
+  ok "terminal UI ready (Bun $("$BUN" --version))"
 }
 
 install_launcher() {
@@ -154,8 +197,9 @@ main() {
   parse_args "$@"
   install_source
   install_engine
+  install_app
   install_launcher
-  printf '\n%saihub-code is installed.%s In a project folder: aihub-code -p "your task"\n' "$B" "$N"
+  printf '\n%saihub-code is installed.%s In a project folder: aihub-code\n' "$B" "$N"
   have ollama || warn "no local Ollama found - aihub-code uses the server or cloud models set up in AIhub (~/.aihub)"
 }
 

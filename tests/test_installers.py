@@ -186,3 +186,65 @@ def test_install_ps1_launcher_update_and_uninstall():
 def test_install_ps1_failure_gives_a_nonzero_exit():
     ps = _read("install.ps1")
     assert "exit 1" in ps.split("} catch {")[1]
+
+
+# ── stage 2: the installers bring Bun and the app's packages ──────────────────
+
+def test_install_sh_installs_bun_and_the_app_packages():
+    sh = _read("install.sh")
+    body = sh.split("install_app() {")[1].split("\n}\n")[0]
+    assert "$HOME/.bun/bin/bun" in body and "oven-sh/bun/releases" in body
+    assert '"$BUN" install' in body and "--frozen-lockfile" in body
+    assert 'cd "$HOME_DIR/app"' in body
+    main = sh.split("main() {")[1]
+    assert main.index("install_engine") < main.index("install_app") < main.index("install_launcher")
+
+
+def test_install_sh_keeps_the_apps_packages_across_updates():
+    assert "app/node_modules" in _read("install.sh").split("install_engine() {")[0]
+
+
+def test_install_ps1_installs_bun_and_the_app_packages():
+    ps = _read("install.ps1")
+    assert "https://bun.sh/install.ps1" in ps and r'.bun\bin\bun.exe' in ps
+    assert "install --production --frozen-lockfile" in ps
+    assert 'Join-Path $CodeHome "app"' in ps
+    assert r'"app\node_modules"' in ps
+    assert ps.index('Step "Terminal UI"') < ps.index("# 4. Launcher")
+
+
+def _cmd_launcher():
+    ps = _read("install.ps1")
+    return ps.split('$cmd = @"')[1].split('"@')[0]
+
+
+def test_cmd_update_is_one_line_that_ends_the_script():
+    # cmd re-reads a batch file by byte offset, and the update rewrites it: the
+    # call and the exit must be one command line.
+    update = _cmd_launcher().split("\n:update\n")[1].split("\n:uninstall\n")[0].strip().splitlines()
+    update = [x for x in update if not x.lower().startswith("rem ")]
+    assert len(update) == 1
+    assert update[0].startswith("powershell ") and update[0].endswith("&& exit /b 0 || exit /b 1")
+
+
+def test_cmd_uninstall_has_no_block_around_the_path():
+    # A path with ")" ends a parenthesised block early, so :uninstall uses goto
+    # labels, and says "removed" only when the folder is gone after rd.
+    un = _cmd_launcher().split("\n:uninstall\n")[1]
+    code = [x for x in un.splitlines() if not x.lower().startswith("rem ")]
+    assert "goto :confirm" in un and "goto :remove" in un
+    for line in code:
+        if not line.startswith("(goto)"):
+            assert "(" not in line.replace("%~1", ""), line     # no block anywhere else
+    last = code[-1]
+    assert last.startswith("(goto) 2>nul & rd /s /q ")
+    assert 'if exist "%AIHUB_CODE_HOME%" (echo ' in last and "removed" in last.split(") else ")[1]
+
+
+def test_versions_agree():
+    import json
+    import re
+    toml = re.search(r'^version\s*=\s*"([^"]+)"', _read("pyproject.toml"), re.M).group(1)
+    init = re.search(r'__version__\s*=\s*"([^"]+)"', _read("aihub_code/__init__.py")).group(1)
+    pkg = json.loads(_read("app/package.json"))["version"]
+    assert toml == init == pkg == "0.2.0"

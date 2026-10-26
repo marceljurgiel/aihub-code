@@ -1,6 +1,6 @@
 {
   "name": "aihub-code-app",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "aihub-code \u2014 interactive OpenTUI line UI over the aihub-code Python bridge",
   "module": "src/index.tsx",
   "type": "module",

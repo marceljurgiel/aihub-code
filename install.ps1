@@ -4,7 +4,8 @@
 #
 # Installs aihub-code without administrator rights, in its own Python
 # environment: uv (Python 3.12), aihub-code and the AIhub engine it builds on
-# (needs git), plus an `aihub-code` command. It reads your AIhub settings
+# (needs git), Bun (it runs the interactive terminal UI) plus an `aihub-code`
+# command. It reads your AIhub settings
 # (%USERPROFILE%\.aihub) and never touches them. Re-running it updates.
 #
 # Optional, set first:
@@ -66,12 +67,12 @@ function Install-AIhubCode {
             throw "the download does not look like aihub-code: $Source"
         }
         # Update: move the old install aside first (nothing changes if that
-        # fails), keep its Python environment and launcher.
+        # fails), keep its Python environment, the app's packages and launcher.
         if (Test-Path $CodeHome) {
             $old = "$CodeHome.old-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
             try { Rename-Item -Path $CodeHome -NewName (Split-Path $old -Leaf) -ErrorAction Stop }
             catch { throw "aihub-code is in use. Close it, then run the installer again. Nothing was changed." }
-            foreach ($keep in @(".venv", "bin")) {
+            foreach ($keep in @(".venv", "app\node_modules", "bin")) {
                 $from = Join-Path $old $keep
                 if (Test-Path $from) { Move-Item $from (Join-Path $src.FullName $keep) }
             }
@@ -105,7 +106,27 @@ function Install-AIhubCode {
     if (-not (Run $uv pip install -q --python $Py -e $CodeHome)) { throw "could not install aihub-code and the AIhub engine" }
     Ok ("aihub-code " + (& $Py -c "import aihub_code; print(aihub_code.__version__)") + ", AIhub engine " + (& $Py -c "import aihub; print(aihub.__version__)"))
 
-    # 3. Launcher
+    # 3. Bun and the app's packages (Bun runs the interactive UI)
+    Step "Terminal UI"
+    $bun = (Get-Command bun -ErrorAction SilentlyContinue).Source
+    if (-not $bun) { $bun = Join-Path $HOME ".bun\bin\bun.exe" }
+    if (-not (Test-Path $bun)) {
+        $ErrorActionPreference = "Continue"
+        & powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://bun.sh/install.ps1 | iex" *>&1 | Out-Null
+        $ErrorActionPreference = "Stop"
+        $bun = Join-Path $HOME ".bun\bin\bun.exe"
+        if (-not (Test-Path $bun)) { throw "could not install Bun" }
+        Ok ("Bun " + (& $bun --version) + " installed")
+    }
+    Push-Location (Join-Path $CodeHome "app")
+    try {
+        if (-not (Run $bun install --production --frozen-lockfile)) {
+            if (-not (Run $bun install --production)) { throw "could not install the app's packages" }
+        }
+    } finally { Pop-Location }
+    Ok ("terminal UI ready (Bun " + (& $bun --version) + ")")
+
+    # 4. Launcher
     Step "Launcher"
     $binDir = Join-Path $CodeHome "bin"
     New-Item -ItemType Directory -Force -Path $binDir | Out-Null
@@ -118,18 +139,22 @@ if /i "%~1"=="update" goto :update
 if /i "%~1"=="uninstall" goto :uninstall
 "%AIHUB_CODE_HOME%\.venv\Scripts\aihub-code.exe" %*
 exit /b %errorlevel%
-rem The labels sit at the end so cmd never re-reads this file while an update rewrites it.
+rem The labels sit at the end so cmd never re-reads this file while an update
+rem rewrites it (cmd resumes a batch file by byte offset): the update is one line.
 :update
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $InstallerUrl | iex" || exit /b 1
-exit /b 0
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $InstallerUrl | iex" && exit /b 0 || exit /b 1
 :uninstall
-if not exist "%AIHUB_CODE_HOME%\.venv\Scripts\aihub-code.exe" (
-  echo %AIHUB_CODE_HOME% is not an aihub-code install - nothing was removed.
-  exit /b 1
-)
+if exist "%AIHUB_CODE_HOME%\.venv\Scripts\aihub-code.exe" goto :confirm
+echo %AIHUB_CODE_HOME% is not an aihub-code install - nothing was removed.
+exit /b 1
+:confirm
 set /p "ANS=Remove aihub-code from %AIHUB_CODE_HOME%? Your AIhub settings and chats stay. [y/N] "
-if /i not "%ANS%"=="y" exit /b 1
-(goto) 2>nul & rd /s /q "%AIHUB_CODE_HOME%" & echo aihub-code removed ^(the PATH entry stays, it is harmless^).
+if /i "%ANS%"=="y" goto :remove
+exit /b 1
+:remove
+rem No parenthesised block expands the path (a ")" in it would end the block), and
+rem the folder is checked after rd. (goto) ends this script so rd can delete it.
+(goto) 2>nul & rd /s /q "%AIHUB_CODE_HOME%" & if exist "%AIHUB_CODE_HOME%" (echo Could not remove everything - close programs that use it and try again.) else echo aihub-code removed. The PATH entry stays, it is harmless.
 "@
     $launcher = Join-Path $binDir "aihub-code.cmd"
     if (Test-Path $launcher) { Remove-Item -Force $launcher }
@@ -146,7 +171,7 @@ if /i not "%ANS%"=="y" exit /b 1
 
     Write-Host ""
     Write-Host "aihub-code $version is installed." -ForegroundColor Green
-    Write-Host "  In a project folder: aihub-code -p `"your task`"   (update later with 'aihub-code update')"
+    Write-Host "  In a project folder: aihub-code   (update later with 'aihub-code update')"
 }
 
 try {
