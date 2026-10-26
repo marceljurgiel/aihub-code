@@ -4,9 +4,9 @@
  * input for what the model should do instead. Every answer carries the id of
  * the prompt that was on screen, so a late answer can never go to a newer one.
  *
- * Numbers are stable: 1 yes, 2 yes and remember (only offered when the engine
- * suggests a rule), 3 no with a note. So "2" does nothing when there is no
- * rule, and "3" always means "tell the model".
+ * The options are numbered 1, 2, 3 as shown: yes; yes and remember (only
+ * offered when the engine suggests a rule); no with a note. Without a rule
+ * there are two, and the digit keys follow the displayed numbers.
  */
 import { useKeyboard } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
@@ -47,8 +47,12 @@ function ruleText(p: PermissionState): string {
   return r.pattern ? `${one(r.tool)}: ${one(r.pattern)}` : one(r.tool);
 }
 
+export type PermissionChoiceKind = "yes" | "always" | "note";
+
 export interface PermissionOption {
-  n: 1 | 2 | 3;
+  /** The number shown, and the key that picks it. */
+  n: number;
+  kind: PermissionChoiceKind;
   line: Line;
 }
 
@@ -56,7 +60,7 @@ export interface PermissionLayout {
   title: Line;
   diff: Line[];
   options: PermissionOption[];
-  /** Width of the "❯ 3. " prefix, where the inline input starts. */
+  /** Width of the "❯ 3. " prefix, where the inline input starts (2 digits never occur). */
   prefixWidth: number;
   /** Rows inside the box. */
   rows: number;
@@ -71,24 +75,25 @@ export function permissionLayout(p: PermissionState, width: number, cursor: numb
     diff = fmtDiff(p.diff, width, MAX_DIFF_ROWS);
     if (diff.length > MAX_DIFF_ROWS) diff = fmtDiff(p.diff, width, MAX_DIFF_ROWS - 1);
   }
-  const labels: { n: 1 | 2 | 3; label: string }[] = [{ n: 1, label: "Yes" }];
+  const labels: { kind: PermissionChoiceKind; label: string }[] = [{ kind: "yes", label: "Yes" }];
   if (p.suggestedRule) {
     const lead = "Yes, and don't ask again for ";
     const tail = " (this project)";
     const room = width - 5 - lead.length - tail.length;
     const rule = ruleText(p);
-    labels.push({ n: 2, label: room >= 8 ? `${lead}${truncate(rule, room)}${tail}` : truncate(`${lead}${rule}${tail}`, width - 5) });
+    labels.push({ kind: "always", label: room >= 8 ? `${lead}${truncate(rule, room)}${tail}` : truncate(`${lead}${rule}${tail}`, width - 5) });
   }
-  labels.push({ n: 3, label: "No, and tell the model what to do instead" });
-  const options = labels.map(({ n, label }, i) => {
+  labels.push({ kind: "note", label: "No, and tell the model what to do instead" });
+  const options = labels.map(({ kind, label }, i) => {
     const on = i === cursor;
+    const n = i + 1;
     const prefix = `${on ? G.pointer : " "} ${n}. `;
-    const text = editing && n === 3 && on ? "" : truncate(label, Math.max(1, width - displayWidth(prefix)));
+    const text = editing && kind === "note" && on ? "" : truncate(label, Math.max(1, width - displayWidth(prefix)));
     const line: Line = [
       { text: prefix, fg: on ? palette.yellow : undefined, bold: on },
       ...(text ? [{ text, bold: on }] : []),
     ];
-    return { n, line };
+    return { n, kind, line };
   });
   const prefixWidth = displayWidth(`${G.pointer} 3. `);
   return { title, diff, options, prefixWidth, rows: 1 + diff.length + options.length };
@@ -103,18 +108,20 @@ export interface PermissionPromptProps {
   guardMs: number;
   /** The inline input opened or closed (the status line's hint follows). */
   onEditing?: (editing: boolean) => void;
+  /** Ctrl+C: the footer interrupts the turn (and remembers that it did). */
+  onInterrupt?: () => void;
 }
 
-export function PermissionPrompt({ controller, permission: p, width, now, guardMs, onEditing }: PermissionPromptProps) {
+export function PermissionPrompt({ controller, permission: p, width, now, guardMs, onEditing, onInterrupt }: PermissionPromptProps) {
   const inner = Math.max(1, width - 4);
   const [cursor, setCursor] = useState(0);
   const [editing, setEditing] = useState(false);
   const layout = permissionLayout(p, inner, cursor, editing);
   const shownAt = useRef(now());
   // Always the prompt on screen, read at key time (keys can outrun renders).
-  const live = useRef({ p, cursor: 0, editing: false, offered: layout.options.map((o) => o.n) });
+  const live = useRef({ p, cursor: 0, editing: false, offered: layout.options.map((o) => o.kind) });
   live.current.p = p;
-  live.current.offered = layout.options.map((o) => o.n);
+  live.current.offered = layout.options.map((o) => o.kind);
   useEffect(() => {
     shownAt.current = now();
     return () => onEditing?.(false);
@@ -129,12 +136,12 @@ export function PermissionPrompt({ controller, permission: p, width, now, guardM
     setEditing(on);
     onEditing?.(on);
   };
-  const choose = (n: 1 | 2 | 3) => {
+  const choose = (kind: PermissionChoiceKind) => {
     const id = live.current.p.permissionId;
-    if (n === 1) controller.answer("yes", id);
-    else if (n === 2) controller.answer("always", id);
+    if (kind === "yes") controller.answer("yes", id);
+    else if (kind === "always") controller.answer("always", id);
     else {
-      move(live.current.offered.indexOf(3));
+      move(live.current.offered.indexOf("note"));
       edit(true);
     }
   };
@@ -142,7 +149,8 @@ export function PermissionPrompt({ controller, permission: p, width, now, guardM
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") {
       key.preventDefault();
-      controller.cancel();
+      if (onInterrupt) onInterrupt();
+      else controller.cancel();
       return;
     }
     const L = live.current;
@@ -163,9 +171,9 @@ export function PermissionPrompt({ controller, permission: p, width, now, guardM
     else if (key.name === "down") move(L.cursor >= last ? 0 : L.cursor + 1);
     else if (key.name === "return" || key.name === "kpenter" || key.name === "linefeed") choose(L.offered[L.cursor]!);
     else if (key.name === "escape") controller.answer({ no: null }, L.p.permissionId);
-    else if (!key.ctrl && !key.meta && (key.sequence === "1" || key.sequence === "2" || key.sequence === "3")) {
-      const n = Number(key.sequence) as 1 | 2 | 3;
-      if (L.offered.includes(n)) choose(n);
+    else if (!key.ctrl && !key.meta && /^[1-9]$/.test(key.sequence ?? "")) {
+      const kind = L.offered[Number(key.sequence) - 1];
+      if (kind) choose(kind);
     }
     key.preventDefault();
   });
@@ -196,7 +204,7 @@ export function PermissionPrompt({ controller, permission: p, width, now, guardM
         <LineText key={`d${i}`} line={l} />
       ))}
       {layout.options.map((o) =>
-        editing && o.n === 3 ? (
+        editing && o.kind === "note" ? (
           <box key="edit" flexDirection="row" height={1} flexShrink={0}>
             <LineText line={o.line} />
             <input

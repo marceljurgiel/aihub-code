@@ -281,9 +281,10 @@ export function Footer(props: FooterProps) {
           now={now}
           guardMs={guardMs}
           onEditing={setNoting}
+          onInterrupt={interrupt}
         />
       ) : picking ? (
-        <Picker picker={st.picker!} width={width} onPick={(id) => void controller.pick(id)} />
+        <Picker picker={st.picker!} width={width} now={now} guardMs={guardMs} onPick={(id) => void controller.pick(id)} />
       ) : (
         <PromptBox
           width={width}

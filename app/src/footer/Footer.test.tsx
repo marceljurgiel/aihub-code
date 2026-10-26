@@ -457,14 +457,30 @@ describe("permission prompt", () => {
     expect(text(m)).toContain("don't ask again for run_terminal: pytest (this project)");
   });
 
-  test("option 2 exists only with a suggested rule", async () => {
+  test("without a suggested rule the options read 1 and 2, and the keys follow the numbers", async () => {
     m = await running();
     await ask(m, 1, { suggested_rule: null });
-    expect(text(m)).not.toContain("2.");
-    expect(text(m)).toContain("3. No, and tell");
-    await press(m, "2");
+    expect(text(m)).toContain("1. Yes");
+    expect(text(m)).toContain("2. No, and tell the model what to do instead");
+    expect(text(m)).not.toContain("3.");
+    expect(text(m)).not.toContain("don't ask again");
+    await press(m, "3"); // there is no 3
     expect(perms(m)).toEqual([]);
     expect(m.c.getState().phase).toBe("permission");
+    await press(m, "2"); // the displayed 2 is the note
+    expect(text(m)).toContain("Tell the model what to do instead");
+    expect(perms(m)).toEqual([]);
+    await type(m, "no thanks");
+    await enter(m);
+    expect(perms(m)).toEqual([{ request_id: m.bridge.lastStream.id, allow: false, permission_id: 1, message: "no thanks" }]);
+  });
+
+  test("with a rule the options are 1, 2 and 3", async () => {
+    m = await running();
+    await ask(m, 1);
+    expect(text(m)).toContain("1. Yes");
+    expect(text(m)).toContain("2. Yes, and don't ask again");
+    expect(text(m)).toContain("3. No, and tell the model");
   });
 
   test("1 allows; 2 allows and remembers; with the shown prompt's id", async () => {
@@ -591,6 +607,18 @@ describe("permission prompt", () => {
     expect(perms(m)).toEqual([]);
   });
 
+  test("Ctrl+C in the prompt counts as the interrupt: the next Ctrl+C takes the exit path", async () => {
+    m = await running();
+    await ask(m, 1);
+    await press(m, "c", { ctrl: true });
+    expect(m.bridge.controls.filter((c) => c.method === "chat.cancel")).toHaveLength(1);
+    await press(m, "c", { ctrl: true });
+    expect(text(m)).toContain("Press Ctrl+C again to exit");
+    expect(m.bridge.controls.filter((c) => c.method === "chat.cancel")).toHaveLength(1);
+    await press(m, "c", { ctrl: true });
+    expect(m.exits).toEqual(["exit"]);
+  });
+
   test("the draft typed before the prompt came is still there after", async () => {
     m = await running();
     await type(m, "half typed");
@@ -706,6 +734,24 @@ describe("pickers", () => {
     m = await startPicker();
     await esc(m);
     expect(m.exits).toEqual(["exit"]);
+  });
+
+  test("keys right after the picker appears are ignored, letters still filter", async () => {
+    const x = await mount({ start: false, guardMs: 300, answers: { "config.get": {}, "models.installed": models(3) } });
+    m = x;
+    await x.c.start({ cont: false, mcp: [], kb: [] });
+    await x.settle();
+    await type(x, "model-1");
+    await enter(x); // typed ahead: must not choose
+    await esc(x); // nor cancel (which would exit the app)
+    await arrow(x, "down");
+    expect(x.bridge.to("code.start")).toEqual([]);
+    expect(x.exits).toEqual([]);
+    expect(x.c.getState().phase).toBe("picker");
+    expect(text(x)).toContain("model-1");
+    x.clock.t += 400;
+    await enter(x);
+    expect(x.bridge.to("code.start")[0]!.params.model).toBe("model-1");
   });
 
   test("backspace widens the filter again", async () => {

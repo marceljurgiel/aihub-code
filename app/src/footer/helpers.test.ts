@@ -140,7 +140,8 @@ describe("permission prompt layout", () => {
     expect(withRule.options.map((o) => o.n)).toEqual([1, 2, 3]);
     expect(lineText(withRule.options[1]!.line)).toContain("don't ask again for edit_file (this project)");
     const without = permissionLayout(perm({ suggestedRule: null }), 60, 0, false);
-    expect(without.options.map((o) => o.n)).toEqual([1, 3]);
+    expect(without.options.map((o) => o.n)).toEqual([1, 2]);
+    expect(without.options.map((o) => o.kind)).toEqual(["yes", "note"]);
     const cmd = permissionLayout(
       perm({ name: "run_terminal", arguments: { command: "git status" }, suggestedRule: { tool: "run_terminal", pattern: "git status", scope: "project" } }),
       90, 0, false,

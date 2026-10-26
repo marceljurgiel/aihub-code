@@ -60,15 +60,22 @@ export function Picker({
   picker,
   width,
   onPick,
+  now = Date.now,
+  guardMs = 250,
 }: {
   picker: PickerState;
   width: number;
   onPick: (id: string | null) => void;
+  now?: () => number;
+  /** Choosing and cancelling keys are ignored this long after the picker opens:
+   *  a typed-ahead Enter must not pick, a typed-ahead Esc must not cancel. */
+  guardMs?: number;
 }) {
   const inner = Math.max(1, width - 4);
   const [filter, setFilter] = useState("");
   const [cursor, setCursor] = useState(0);
   const top = useRef(0);
+  const shownAt = useRef(now());
   const layout = pickerLayout(picker.items, filter, cursor, top.current, inner);
   top.current = layout.top;
   const live = useRef({ matches: layout.matches, cursor: layout.cursor, onPick });
@@ -76,6 +83,12 @@ export function Picker({
 
   useKeyboard((key) => {
     const L = live.current;
+    const isAction =
+      key.name === "up" || key.name === "down" || key.name === "return" || key.name === "kpenter" || key.name === "linefeed" || key.name === "escape" || (key.ctrl && key.name === "c");
+    if (isAction && now() - shownAt.current < guardMs) {
+      key.preventDefault();
+      return;
+    }
     if ((key.ctrl && key.name === "c") || key.name === "escape") {
       key.preventDefault();
       L.onPick(null);
