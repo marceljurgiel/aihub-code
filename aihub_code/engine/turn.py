@@ -107,8 +107,8 @@ def no_vision_message(model: str, backend: str) -> str:
         seeing = vision_models(get_local_models())
     except Exception:
         seeing = []
-    tail = (f" Models you have that can: {', '.join(seeing[:6])} (^O)." if seeing
-            else " Pick a vision model in ^O — e.g. gemma4:cloud (free) or qwen3.5.")
+    tail = (f" Models you have that can: {', '.join(seeing[:6])}. Start the session with one: aihub-code --model NAME." if seeing
+            else " Start the session with a vision model: aihub-code --model NAME \u2014 e.g. gemma4:cloud (free) or qwen3.5.")
     return f"{model} can't read images, so nothing was sent.{tail}"
 
 

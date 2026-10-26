@@ -37,6 +37,21 @@ function Install-AIhubCode {
 
     Write-Host "aihub-code installer " -NoNewline; Write-Host "- a coding agent for local and cloud models" -ForegroundColor DarkGray
 
+    # Only an aihub-code install (or an empty folder) may be replaced: the
+    # directory is moved aside and deleted on update, so AIHUB_CODE_HOME=~\tools
+    # must never be taken for one.
+    function Test-CodeInstall($dir) {
+        if (Test-Path (Join-Path $dir ".venv\Scripts\aihub-code.exe")) { return $true }
+        $toml = Join-Path $dir "pyproject.toml"
+        return ((Test-Path $toml) -and [bool](Select-String -Path $toml -Pattern '^name\s*=\s*"aihub-code"' -Quiet))
+    }
+    if (Test-Path -LiteralPath $CodeHome) {
+        $isDir = Test-Path -LiteralPath $CodeHome -PathType Container
+        if (-not $isDir -or ((Get-ChildItem -LiteralPath $CodeHome -Force | Select-Object -First 1) -and -not (Test-CodeInstall $CodeHome))) {
+            throw "$CodeHome is not an aihub-code install - choose a new or empty directory (AIHUB_CODE_HOME). Nothing was changed."
+        }
+    }
+
     # 1. The source
     Step "Downloading aihub-code"
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git is required (the AIhub engine is installed from GitHub)" }
@@ -47,7 +62,7 @@ function Install-AIhubCode {
         if (Test-Path $Source) { Copy-Item $Source $zip } else { Invoke-WebRequest -UseBasicParsing -Uri $Source -OutFile $zip }
         Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp "x") -Force
         $src = Get-ChildItem (Join-Path $tmp "x") -Directory | Select-Object -First 1
-        if (-not $src -or -not (Test-Path (Join-Path $src.FullName "pyproject.toml"))) {
+        if (-not $src -or -not (Test-Path (Join-Path $src.FullName "pyproject.toml")) -or -not (Test-Path (Join-Path $src.FullName "aihub_code"))) {
             throw "the download does not look like aihub-code: $Source"
         }
         # Update: move the old install aside first (nothing changes if that
@@ -99,12 +114,22 @@ function Install-AIhubCode {
 rem aihub-code launcher (written by install.ps1). Re-run the installer to update.
 setlocal
 set "AIHUB_CODE_HOME=$CodeHome"
-if /i "%~1"=="update" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $InstallerUrl | iex"
-  exit /b %errorlevel%
-)
+if /i "%~1"=="update" goto :update
+if /i "%~1"=="uninstall" goto :uninstall
 "%AIHUB_CODE_HOME%\.venv\Scripts\aihub-code.exe" %*
 exit /b %errorlevel%
+rem The labels sit at the end so cmd never re-reads this file while an update rewrites it.
+:update
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $InstallerUrl | iex" || exit /b 1
+exit /b 0
+:uninstall
+if not exist "%AIHUB_CODE_HOME%\.venv\Scripts\aihub-code.exe" (
+  echo %AIHUB_CODE_HOME% is not an aihub-code install - nothing was removed.
+  exit /b 1
+)
+set /p "ANS=Remove aihub-code from %AIHUB_CODE_HOME%? Your AIhub settings and chats stay. [y/N] "
+if /i not "%ANS%"=="y" exit /b 1
+(goto) 2>nul & rd /s /q "%AIHUB_CODE_HOME%" & echo aihub-code removed ^(the PATH entry stays, it is harmless^).
 "@
     $launcher = Join-Path $binDir "aihub-code.cmd"
     if (Test-Path $launcher) { Remove-Item -Force $launcher }
@@ -129,4 +154,8 @@ try {
 } catch {
     Write-Host ""
     Write-Host "error: $($_.Exception.Message)" -ForegroundColor Red
+    # Run as a file: a failing exit code. Via `irm | iex` there is no file, and
+    # exiting would close the user's own PowerShell window with the message.
+    $global:LASTEXITCODE = 1
+    if ($MyInvocation.MyCommand.Path) { exit 1 }
 }

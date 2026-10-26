@@ -1,5 +1,6 @@
 """The command's own surface and the bridge methods served by AIhub's handlers."""
-import json
+import importlib
+import io
 import sys
 import types
 
@@ -47,3 +48,23 @@ def test_bridge_unknown_method_is_an_error(monkeypatch):
     monkeypatch.setattr(bridge, "_send", sent.append)
     bridge._run(7, "chat.turn", {})        # AIhub's chat is not served here
     assert sent == [{"id": 7, "error": "unknown method: chat.turn"}]
+
+
+def test_cli_makes_stdout_and_stderr_utf8(monkeypatch):
+    # A Windows console is cp1252: without a reconfigure, --output json turns
+    # non-Latin text into "?".
+    import aihub_code.cli as cli
+    raw_out, raw_err = io.BytesIO(), io.BytesIO()
+    out = io.TextIOWrapper(raw_out, encoding="cp1252", errors="strict", write_through=True)
+    err = io.TextIOWrapper(raw_err, encoding="cp1252", errors="strict", write_through=True)
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    try:
+        importlib.reload(cli)
+        print("\u0142\u015b\u2192", file=sys.stdout)
+        print("\u0142\u015b\u2192", file=sys.stderr)
+    finally:
+        monkeypatch.undo()
+        importlib.reload(cli)
+    assert raw_out.getvalue() == "\u0142\u015b\u2192\n".encode("utf-8")
+    assert raw_err.getvalue() == "\u0142\u015b\u2192\n".encode("utf-8")

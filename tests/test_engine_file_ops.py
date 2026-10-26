@@ -139,8 +139,51 @@ def test_run_tool_fits_sloppy_arguments_like_aihub(tmp_path, monkeypatch):
     assert "[Tool Error] Bad arguments" in engine_tools.run_tool("edit_file", path="f.txt")
 
 
-def test_run_tool_passes_other_tools_to_aihub(monkeypatch):
+def test_run_tool_runs_registry_tools_with_aihubs_fitting(monkeypatch):
+    import aihub.tools as aihub_tools
     seen = []
-    monkeypatch.setattr("aihub.tools.run_tool", lambda name, **kw: seen.append((name, kw)) or "ok")
-    assert engine_tools.run_tool("list_files", path=".") == "ok"
-    assert seen == [("list_files", {"path": "."})]
+    monkeypatch.setitem(aihub_tools.TOOLS_REGISTRY, "fake_tool",
+                        lambda path, n: seen.append((path, n)) or "ok")
+    assert engine_tools.run_tool("fake_tool", path=".", n="3", extra=1) == "ok"
+    assert seen == [(".", "3")]
+
+
+def test_run_tool_unknown_tool_lists_the_available_ones():
+    out = engine_tools.run_tool("no_such_tool")
+    assert out.startswith("[Tool Error] Unknown tool: 'no_such_tool'") and "edit_file" in out
+
+
+def test_mcp_tool_with_an_argument_named_name(monkeypatch):
+    # run_tool(name, **args) must not choke on an argument called "name".
+    calls = []
+    monkeypatch.setattr("aihub.mcp_client.split_name", lambda n: ("srv", "make") if n == "srv__make" else None)
+    monkeypatch.setattr("aihub.mcp_client.run", lambda n, a: calls.append((n, a)) or "made")
+    assert engine_tools.run_tool("srv__make", name="x", path="p") == "made"
+    assert calls == [("srv__make", {"name": "x", "path": "p"})]
+
+
+def test_runner_passes_mcp_arguments_named_name(runner, monkeypatch):
+    tmp, r, _ = runner
+    calls = []
+    monkeypatch.setattr("aihub.mcp_client.split_name", lambda n: ("srv", "make") if n == "srv__make" else None)
+    monkeypatch.setattr("aihub.mcp_client.run", lambda n, a: calls.append((n, a)) or "made")
+    assert r("srv__make", {"name": "x"}) == "made"
+    assert calls == [("srv__make", {"name": "x"})]
+
+
+def test_the_engine_chat_copy_uses_the_local_run_tool():
+    # hooks=None callers of run_chat_turn must get the byte-preserving tools too.
+    from aihub_code.engine import chat
+    assert chat.run_tool is engine_tools.run_tool
+
+
+def test_no_vision_message_speaks_aihub_code(monkeypatch):
+    from aihub_code.engine.turn import no_vision_message
+    monkeypatch.setattr("aihub.ollama_client.get_local_models", lambda: ["llava:7b"])
+    monkeypatch.setattr("aihub.attachments.vision_models", lambda names: ["llava:7b"])
+    with_models = no_vision_message("m", "ollama")
+    monkeypatch.setattr("aihub.attachments.vision_models", lambda names: [])
+    without = no_vision_message("m", "ollama")
+    for msg in (with_models, without):
+        assert "^O" not in msg and "aihub-code --model" in msg
+    assert "llava:7b" in with_models

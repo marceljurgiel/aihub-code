@@ -5,9 +5,19 @@
 """
 from __future__ import annotations
 
+import sys
 from typing import List, Optional
 
-import typer
+# Output is Unicode (file names, answers, --output json); a Windows console's
+# ANSI code page (cp1252) would turn it into "?" without a word.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if (_stream.encoding or "").lower().replace("-", "") != "utf8":
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+import typer  # noqa: E402
 
 from . import __version__
 

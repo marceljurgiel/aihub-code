@@ -55,7 +55,24 @@ version_of() {
   sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$HOME_DIR/pyproject.toml" | head -1
 }
 
+# Only a folder that is an aihub-code install (or empty) may be replaced: the
+# directory is moved aside and deleted on update, so --dir ~/tools must never
+# be taken for one.
+is_install_dir() {
+  [ -x "$1/.venv/bin/aihub-code" ] || grep -qs '^name[[:space:]]*=[[:space:]]*"aihub-code"' "$1/pyproject.toml"
+}
+
+check_install_dir() {
+  [ -e "$1" ] || return 0
+  [ -d "$1" ] || { printf '%s is not a directory - choose a new or empty directory\n' "$1" >&2; return 1; }
+  [ -z "$(ls -A "$1")" ] && return 0
+  is_install_dir "$1" && return 0
+  printf '%s is not an aihub-code install - choose a new or empty directory (--dir). Nothing was changed.\n' "$1" >&2
+  return 1
+}
+
 install_source() {
+  check_install_dir "$HOME_DIR" || exit 1
   step "Downloading aihub-code"
   mkdir -p "$(dirname "$HOME_DIR")"
   tmp="$(mktemp -d "$(dirname "$HOME_DIR")/.aihub-code-install.XXXXXX")"
@@ -102,8 +119,16 @@ install_launcher() {
 # aihub-code launcher (written by install.sh). Re-run the installer to update.
 AIHUB_CODE_HOME="$HOME_DIR"
 case "\${1:-}" in
-  update)    shift; curl -fsSL "$INSTALLER_URL" | bash -s -- --dir "\$AIHUB_CODE_HOME" "\$@"; exit \$? ;;
-  uninstall) printf 'Remove aihub-code from %s? Your AIhub settings and chats in ~/.aihub stay. [y/N] ' "\$AIHUB_CODE_HOME"
+  update)    shift; t="\$(mktemp)" || exit 1
+             if command -v curl >/dev/null 2>&1; then curl -fsSL -o "\$t" "$INSTALLER_URL"
+             elif command -v wget >/dev/null 2>&1; then wget -q -O "\$t" "$INSTALLER_URL"
+             else echo "curl or wget is required" >&2; rm -f "\$t"; exit 1; fi \\
+               && bash "\$t" --dir "\$AIHUB_CODE_HOME" "\$@"
+             r=\$?; rm -f "\$t"; exit \$r ;;
+  uninstall) if [ ! -x "\$AIHUB_CODE_HOME/.venv/bin/aihub-code" ] && ! grep -qs '^name[[:space:]]*=[[:space:]]*"aihub-code"' "\$AIHUB_CODE_HOME/pyproject.toml"; then
+               echo "\$AIHUB_CODE_HOME is not an aihub-code install - nothing was removed." >&2; exit 1
+             fi
+             printf 'Remove aihub-code from %s? Your AIhub settings and chats in ~/.aihub stay. [y/N] ' "\$AIHUB_CODE_HOME"
              read -r a; [ "\$a" = y ] || exit 1
              rm -rf "\$AIHUB_CODE_HOME" "\$0"; echo "aihub-code removed."; exit 0 ;;
 esac
@@ -134,4 +159,5 @@ main() {
   have ollama || warn "no local Ollama found - aihub-code uses the server or cloud models set up in AIhub (~/.aihub)"
 }
 
-main "$@"
+# Sourcing the file (AIHUB_CODE_SOURCED=1) loads the functions without installing.
+[ -n "${AIHUB_CODE_SOURCED:-}" ] || main "$@"

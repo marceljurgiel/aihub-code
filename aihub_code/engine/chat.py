@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Union
 from aihub.history import save_session
 from aihub.memory import build_system_prompt
 from aihub.tools import wants_tools, TOOLS_SCHEMA
-from aihub.tools import run_tool
+from .tools import run_tool
 
 
 def _extract_fallback_tool_calls(text: str, valid_names: set) -> List[Dict[str, Any]]:
