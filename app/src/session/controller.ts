@@ -16,7 +16,11 @@
  *  - after cancel every event of that turn is ignored but `done` (a prompt
  *    that still arrives is denied at once, so the engine never waits for it);
  *  - when the bridge dies the phase becomes "error" with the client's message
- *    printed red; the queue is kept and the input stays usable.
+ *    printed red; the queue is kept and the input stays usable;
+ *  - one model request at a time: a scheduled task (SchedulerHost runs AIhub's
+ *    clock) never starts while `isBusy()`, and a prompt waits for a running
+ *    task (`taskRunning`) in the queue; the task's output is a block in the
+ *    transcript (TaskBlock).
  */
 import type { StreamHandle } from "../bridge/client";
 import type { Args, Mode } from "../args";
@@ -48,6 +52,8 @@ import { Attachments } from "./attachments";
 import { agentNote, HubChat, type ChatMessage, type HubKind } from "./hubChat";
 import { CODE, fmtKnowledge, hubDiff, kindHeader, kindLabel, sameKind, type AgentCheck, type Kind } from "./kinds";
 import { fmtMemoryChange, Learner } from "./learn";
+import { TaskBlock } from "./taskBlock";
+import type { MissedTask } from "../hub/schedule/types";
 
 /** What the controller needs of BridgeClient (tests pass a mock). */
 export interface Bridge {
@@ -166,6 +172,20 @@ export interface ControllerState {
   mcp: boolean;
   /** Every knowledge base there is, for `/kb <name>` suggestions. */
   kbNames: string[];
+  /** The scheduled task running now (it has the model), or null. */
+  taskRunning: string | null;
+}
+
+/** What SchedulerHost hands the controller of AIhub's clock (useScheduler). */
+export interface SchedulerHandle {
+  runNow(name: string): void;
+  /** Cancel the running task (the routed chat.cancel). */
+  cancel(): void;
+  /** Live, for the Schedule window. */
+  isRunning(): string | null;
+  lastEnded(): { name: string; n: number };
+  /** On quit: start nothing new, cancel the running task, resolve at its end. */
+  stop(): Promise<void>;
 }
 
 export type PermissionChoice = "yes" | "always" | { no: string | null };
@@ -192,12 +212,9 @@ export interface ControllerOptions {
   /** /new or /clear: the app clears the screen, its saved lines and its
    *  transcript; the fresh view (header, notes) is written right after. */
   onFresh?: () => void;
-  /** How long exit() waits for an interrupted turn to end (the engine saves
-   *  the session at the turn's end) before it goes anyway. */
+  /** How long exit() waits for an interrupted turn (or a cancelled scheduled
+   *  task) to end — the engine saves the session then — before it goes anyway. */
   exitGraceMs?: number;
-  /** A scheduled task is using the model (Task 9's scheduler): automatic
-   *  memory waits for it, as it waits for a turn. */
-  taskRunning?: () => boolean;
 }
 
 /** `gemma4:cloud`, `gpt-oss:120b-cloud`: runs on ollama.com. */
@@ -259,6 +276,7 @@ export class Controller {
     knowledge: [],
     mcp: false,
     kbNames: [],
+    taskRunning: null,
   };
   private listeners = new Set<() => void>();
   private turn: Turn | null = null;
@@ -310,12 +328,21 @@ export class Controller {
   private readonly learner: Learner;
   // A /skill's text is being fetched: its turn goes out first.
   private invoking = false;
+  // AIhub's clock (SchedulerHost), the running task's block, whether the
+  // queue's "waiting for task" note was said for this run, and the answer
+  // the missed panel owes the clock.
+  private scheduler: SchedulerHandle | null = null;
+  private task: TaskBlock | null = null;
+  private taskWaitNoted = false;
+  private missedAnswer: ((choice: "run" | "skip") => void) | null = null;
 
   constructor(private readonly o: ControllerOptions) {
     // A bridge that dies between turns is said at once, not at the next Enter.
     o.bridge.onDead?.((err) => this.bridgeDied(err));
     this.learner = new Learner(o.bridge, undefined, {
-      isBusy: () => this.turn !== null || o.taskRunning?.() === true,
+      isBusy: () => this.turn !== null || this.state.taskRunning !== null,
+      // A task that waited for the learn may start now.
+      onSettled: () => this.set({}),
       onChanges: (changes) => {
         if (!this.exited) for (const c of changes) this.write(fmtMemoryChange(c, this.o.width()));
       },
@@ -661,6 +688,13 @@ export class Controller {
     if (!this.state.sessionId || this.o.bridge.deadError()) return;
     const [next, ...rest] = this.state.queue;
     if (next === undefined) return;
+    // A scheduled task has the model: the prompt goes right after it (taskIdle).
+    const task = this.state.taskRunning;
+    if (task) {
+      if (!this.taskWaitNoted) this.note(`Waiting for task ${task}\u2026 your message goes right after.`);
+      this.taskWaitNoted = true;
+      return;
+    }
     const images = this.queuedImages.shift() ?? [];
     this.set({ queue: rest });
     this.sendTurn(next, undefined, images);
@@ -1011,6 +1045,11 @@ export class Controller {
    *  comes meanwhile is drawn in its place until it is answered. */
   openPanel(id: PanelId, arg?: string): boolean {
     const { phase } = this.state;
+    // The clock waits for this answer (and keys would go to the other window).
+    if (this.state.panel?.id === "missed" && id !== "missed") {
+      this.note("Answer the missed task first (enter run now, s skip).");
+      return false;
+    }
     const viewOnly = id === "models" && phase === "running";
     if (!viewOnly && (phase === "running" || phase === "permission" || phase === "picker")) {
       this.note("Finish or interrupt the current turn first (Esc).");
@@ -1024,9 +1063,120 @@ export class Controller {
    *  was queued meanwhile goes out. */
   closePanel(result?: string): void {
     if (!this.state.panel) return;
+    // Closed without an answer: skipped, as Esc in AIhub's window is.
+    if (this.state.panel.id === "missed") this.answerMissed("skip");
     this.set({ panel: null });
     if (result) this.note(result);
     this.drainQueue();
+  }
+
+  // ── scheduled tasks ────────────────────────────────────────────────────────
+  // AIhub's clock runs in SchedulerHost (useScheduler); these are its hooks.
+
+  /** SchedulerHost hands over the clock; the result detaches it. */
+  attachScheduler(h: SchedulerHandle): () => void {
+    this.scheduler = h;
+    return () => {
+      if (this.scheduler === h) this.scheduler = null;
+    };
+  }
+
+  /** The clock, for the Schedule window (null before SchedulerHost mounts). */
+  get tasks(): SchedulerHandle | null {
+    return this.scheduler;
+  }
+
+  /** The model is in use: a turn (or a /skill about to send one), or memory
+   *  learning. A scheduled task waits. */
+  isBusy(): boolean {
+    return this.turn !== null || this.invoking || this.learner.learning;
+  }
+
+  /** Run a task now (the Schedule window, /schedule run): after what runs. */
+  runTask(name: string): boolean {
+    if (!this.scheduler) {
+      this.error("Scheduled tasks aren't running in this window.");
+      return false;
+    }
+    this.scheduler.runNow(name);
+    return true;
+  }
+
+  cancelTask(): void {
+    this.scheduler?.cancel();
+  }
+
+  taskStarted(name: string): void {
+    this.task = new TaskBlock(name, this.o.width, (lines) => {
+      if (!this.exited) this.write(lines);
+    });
+    this.taskWaitNoted = false;
+    this.set({ taskRunning: name });
+  }
+
+  taskEvent(event: string, data: any): void {
+    this.task?.event(event, data);
+  }
+
+  /** The run is over (its result note follows). */
+  taskEnded(): void {
+    this.task?.end();
+    this.task = null;
+    this.set({ taskRunning: null });
+  }
+
+  /** After a task: a prompt that waited for it goes out. True when the model
+   *  is taken again (the next task then waits for that reply). */
+  taskIdle(): boolean {
+    this.drainQueue();
+    return this.turn !== null;
+  }
+
+  /** The clock's notes ("Task x finished…"); nothing once leaving. */
+  taskNote(text: string, error = false): void {
+    if (this.exited) return;
+    if (error) this.error(text);
+    else this.note(text);
+  }
+
+  /** Slots missed while aihub-code was closed: one missed panel each, once
+   *  nothing else is on screen (after the start-up, between turns). */
+  askMissed(task: MissedTask, index: number, total: number): Promise<"run" | "skip"> {
+    return new Promise((resolve) => {
+      const tryOpen = (): boolean => {
+        const { phase, panel } = this.state;
+        const free = phase === "idle" || (phase === "error" && !this.o.bridge.deadError());
+        if (this.exited || this.missedAnswer || panel || !free) return false;
+        this.missedAnswer = resolve;
+        this.openPanel("missed", JSON.stringify({ task, index, total }));
+        return true;
+      };
+      if (tryOpen()) return;
+      // After what the change belongs to has run (a turn's end drains the queue first).
+      let waiting = true;
+      const unsub = this.subscribe(() =>
+        queueMicrotask(() => {
+          if (waiting && tryOpen()) {
+            waiting = false;
+            unsub();
+          }
+        }),
+      );
+    });
+  }
+
+  /** The missed panel's answer. */
+  answerMissed(choice: "run" | "skip"): void {
+    const answer = this.missedAnswer;
+    this.missedAnswer = null;
+    answer?.(choice);
+  }
+
+  /** Something else wants the model: not while a task has it. */
+  private taskHasModel(): boolean {
+    const task = this.state.taskRunning;
+    if (task) this.note(`Task ${task} is using the model \u2014 try again when it is done.`);
+    return task !== null;
   }
 
   // ── commands, exit ─────────────────────────────────────────────────────────
@@ -1116,7 +1266,7 @@ export class Controller {
 
   /** `/compact`. */
   compact(): void {
-    if (!this.requireSession() || !this.requireCode("compact") || !this.canSwitch()) return;
+    if (!this.requireSession() || !this.requireCode("compact") || !this.canSwitch() || this.taskHasModel()) return;
     this.startStream("code.compact", {}, "compacting\u2026");
   }
 
@@ -1326,7 +1476,7 @@ export class Controller {
    *  to the context in use) go to the model as the prompt; the transcript
    *  keeps what was typed (the command's echo). Between turns only. */
   async useSkill(name: string, task: string): Promise<void> {
-    if (!this.requireSession() || !this.canSwitch()) return;
+    if (!this.requireSession() || !this.canSwitch() || this.taskHasModel()) return;
     this.invoking = true;
     let content: string;
     try {
@@ -1600,8 +1750,9 @@ export class Controller {
 
   /** A conversation from AIhub's history (the history window): it continues
    *  under chat (or under the agent in front, as AIhub keeps its mode). */
-  async loadHistory(messages: ChatMessage[], startTime?: string): Promise<void> {
-    if (this.exited || !this.requireSession() || !this.canSwitch()) return;
+  async loadHistory(messages: ChatMessage[], startTime?: string): Promise<boolean> {
+    if (this.exited || !this.requireSession() || !this.canSwitch()) return false;
+    let loaded = false;
     await this.switchWith(async () => {
       const cur = this.state.kind;
       const k: HubKind = cur.type === "code" ? { type: "chat" } : cur;
@@ -1619,7 +1770,9 @@ export class Controller {
       this.o.onResume?.(messages);
       const n = messages.filter((x) => x.role === "user" || x.role === "assistant").length;
       this.note(`Resumed session \u2014 ${n} messages.`);
+      loaded = true;
     });
+    return loaded;
   }
 
   private current(): { model: string; backend: Backend; streamModel: string } {
@@ -1743,13 +1896,20 @@ export class Controller {
     if (this.exited) return;
     this.exited = true;
     this.learner.cancel(); // AIhub's quit drops a pending learn too
+    // No new task starts; a running one is cancelled (the routed chat.cancel)
+    // and its end awaited like a turn's, so the engine records it.
+    const taskRunning = this.scheduler?.isRunning() ?? null;
+    const taskStop = this.scheduler?.stop() ?? null;
     const turn = this.turn;
-    if (!turn?.handle && !this.pendingOpts) return this.o.onExit?.();
+    if (!turn?.handle && !this.pendingOpts && !taskRunning) return this.o.onExit?.();
     if (turn?.handle) this.cancel();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const grace = new Promise<void>((r) => (timer = setTimeout(r, this.o.exitGraceMs ?? 1500)));
     void (async () => {
-      if (turn?.handle) await Promise.race([turn.handle.done.then(noop, noop), grace]);
+      const ends: Promise<unknown>[] = [];
+      if (turn?.handle) ends.push(turn.handle.done.then(noop, noop));
+      if (taskRunning && taskStop) ends.push(taskStop);
+      if (ends.length) await Promise.race([Promise.all(ends), grace]);
       // A /kb or /mcp change still waiting is applied (and saved) before leaving.
       if (this.pendingOpts) {
         if (this.canFlushOptions()) await Promise.race([this.flushOptions(), grace]);

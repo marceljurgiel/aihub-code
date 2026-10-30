@@ -200,7 +200,7 @@ const INFO = {
 };
 const ARGS: Args = { cont: false, mcp: [], kb: [] };
 
-async function started(o: { taskRunning?: () => boolean } = {}) {
+async function started() {
   const bridge = new MockBridge();
   bridge.answers["config.get"] = { default_chat_model: "gemma4:cloud" };
   bridge.answers["code.start"] = (p: Record<string, unknown>) => ({ ...INFO, session_id: `s${bridge.to("code.start").length}` });
@@ -209,7 +209,7 @@ async function started(o: { taskRunning?: () => boolean } = {}) {
   bridge.answers["hardware.recommend_context"] = { context: 4096 };
   bridge.answers["memory.learn"] = { changes: [], cursor: 1 };
   const sink = memorySink();
-  const c = new Controller({ bridge, sink, commands: commandTable(), now: () => 1000, width: () => 100, cwd: "/home/alex/proj", home: "/home/alex", taskRunning: o.taskRunning });
+  const c = new Controller({ bridge, sink, commands: commandTable(), now: () => 1000, width: () => 100, cwd: "/home/alex/proj", home: "/home/alex" });
   await c.start(ARGS);
   const text = () => sink.lines.join("\n");
   const run = async (line: string) => {
@@ -272,14 +272,15 @@ describe("learning after turns", () => {
     expect(m.learns()).toHaveLength(1);
   });
 
-  test("a scheduled task running (Task 9's hook) holds learning too", async () => {
-    const task = { on: true };
-    const m = await started({ taskRunning: () => task.on });
+  test("a scheduled task running holds learning too", async () => {
+    const m = await started();
     await m.run("I work in Rust");
+    m.c.taskStarted("daily"); // (the clock never starts one next to a turn; the learner only looks at it)
     m.bridge.lastStream.finish(codeDone("I work in Rust"));
     await sleep(IDLE * 3);
     expect(m.learns()).toHaveLength(0);
-    task.on = false;
+    m.c.taskEnded();
+    m.c.taskIdle();
     await until(() => m.learns().length === 1);
   });
 

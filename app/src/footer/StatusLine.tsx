@@ -9,6 +9,8 @@ export interface StatusInput {
   model: string;
   ctx: { used: number; limit: number };
   queued: number;
+  /** The scheduled task running now (said on the right). */
+  task?: string | null;
   /** The key hints when nothing replaces them (default DEFAULT_HINTS). */
   hints?: string[];
   /** Replaces the key hints (a question, or the keys of a prompt). */
@@ -24,7 +26,7 @@ export const CHAT_HINTS = ["/agent switch", "/help"];
 /** Left to right; the width decides how many of the tail segments survive. */
 export function statusLine(s: StatusInput, width: number): Line {
   const ctxPct = s.ctx.limit > 0 ? `ctx ${Math.min(100, Math.round((s.ctx.used / s.ctx.limit) * 100))}%` : null;
-  const right = s.queued > 0 ? `queued ${s.queued}` : "";
+  const right = [s.task ? `task ${s.task}\u2026` : "", s.queued > 0 ? `queued ${s.queued}` : ""].filter(Boolean).join(SEP);
   const hints: Span[][] = s.hint ? [[s.hint.warn ? { text: s.hint.text, fg: palette.yellow } : dim(s.hint.text)]] : (s.hints ?? DEFAULT_HINTS).map((h) => [dim(h)]);
   const model = s.model || "no model";
   const segs = (m: string, nHints: number): Span[][] => [

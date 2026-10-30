@@ -2,9 +2,10 @@
 /** Scheduled tasks in the app: the Schedule window, its form, the task queue
  *  and the missed-run window.
  *  aihub-code: the windows are opened as a panel opens them; "run now" goes to
- *  onRunNow. Not ported (ChatScreen's and useScheduler's clock; Task 9 rewrites
- *  them against the controller): /schedule, the due-task clock, holding chat
- *  messages for a task, failures in the chat, quitting during a run. */
+ *  onRunNow. Not ported here (ChatScreen's and useScheduler's clock): /schedule,
+ *  the due-task clock, holding chat messages for a task, failures in the chat,
+ *  quitting during a run — panels/scheduler.test.tsx covers them against the
+ *  controller. */
 import { test, expect, afterEach } from "bun:test";
 import { MissedTasksModal } from "./modals/MissedTasksModal.tsx";
 import { ScheduleModal } from "./modals/ScheduleModal.tsx";

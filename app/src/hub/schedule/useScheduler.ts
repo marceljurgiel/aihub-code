@@ -1,9 +1,7 @@
 // Ported from AIhub-TUI v1.5.0 app/src/schedule/useScheduler.ts.
-import { createElement, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useBridge } from "../state/BridgeContext.tsx";
-import { useModals } from "../state/ModalContext.tsx";
 import { debugLog } from "../bridge/client.ts";
-import { MissedTasksModal } from "../modals/MissedTasksModal.tsx";
 import { TaskQueue } from "./queue.ts";
 import type { MissedTask } from "./types.ts";
 
@@ -14,6 +12,11 @@ export const schedulerTiming = { checkMs: 30_000 };
  * The clock for scheduled tasks — they run only while AIhub is open. On start
  * it asks about slots missed while closed (one prompt per task), then checks
  * every 30 s and runs what is due, one at a time and never next to a chat turn.
+ *
+ * aihub-code glue: the host asks about missed slots (`askMissed`, its missed
+ * panel, in place of AIhub's modal) and is told when a run starts, what it
+ * streams and when it ends (`onStart` / `onEvent` / `onEnd`), so the task's
+ * output prints in the transcript. The notes point to /schedule (no F7 here).
  */
 export function useScheduler(opts: {
   /** A chat turn is streaming (the model is busy). */
@@ -22,9 +25,14 @@ export function useScheduler(opts: {
   /** A task ended: the chat may send a message that waited for it. True
    *  when it did — the next task then waits for that reply. */
   onIdle: () => boolean;
+  /** One prompt per missed task (AIhub: MissedTasksModal). */
+  askMissed: (task: MissedTask, index: number, total: number) => Promise<"run" | "skip">;
+  /** A run started; its stream's events; it ended (before the result note). */
+  onStart?: (name: string) => void;
+  onEvent?: (name: string, event: string, data: any) => void;
+  onEnd?: (name: string) => void;
 }) {
   const bridge = useBridge();
-  const modals = useModals();
   const queue = useRef(new TaskQueue()).current;
   const [running, setRunning] = useState<string | null>(null);
   const runId = useRef<number | null>(null);
@@ -44,15 +52,19 @@ export function useScheduler(opts: {
     const { name, slot } = next;
     queue.start(name);
     setRunning(name);
-    const s = bridge.stream("schedule.run", slot ? { name, slot } : { name }, { onEvent: () => {} });
+    optsRef.current.onStart?.(name);
+    const s = bridge.stream("schedule.run", slot ? { name, slot } : { name }, {
+      onEvent: (event: string, data: any) => optsRef.current.onEvent?.(name, event, data),
+    });
     runId.current = s.id;
     s.done
+      .finally(() => optsRef.current.onEnd?.(name))
       .then((d: any) => {
-        if (d?.status === "ok") optsRef.current.addSystem(`Task ${name} finished — F7 to see it.`);
+        if (d?.status === "ok") optsRef.current.addSystem(`Task ${name} finished — /schedule to see it.`);
         else if (d?.status === "cancelled") optsRef.current.addSystem(`Task ${name} cancelled.`);
       })
       .catch((e) =>
-        optsRef.current.addSystem(`Task ${name} failed: ${(e as Error)?.message || e} — F7 for details.`, true),
+        optsRef.current.addSystem(`Task ${name} failed: ${(e as Error)?.message || e} — /schedule for details.`, true),
       )
       .finally(() => {
         runId.current = null;
@@ -100,9 +112,7 @@ export function useScheduler(opts: {
     const askMissed = async (missed: MissedTask[]) => {
       for (let i = 0; i < missed.length && !stopped; i++) {
         const m = missed[i]!;
-        const choice = await modals.push<"run" | "skip">((close) =>
-          createElement(MissedTasksModal, { task: m, index: i, total: missed.length, onClose: close }),
-        );
+        const choice = await optsRef.current.askMissed(m, i, missed.length);
         if (choice === "run") enqueue(m.name, m.slot);
         else bridge.request("schedule.skip", { name: m.name, slot: m.slot }).catch(checkFailure);
       }

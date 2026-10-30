@@ -37,6 +37,9 @@ export interface LearnerOptions {
   onChanges?: (changes: MemoryChange[]) => void;
   /** "Learning memory failed: …", once per distinct failure. */
   onError?: (text: string) => void;
+  /** A memory.learn request ended: the model is free again (a scheduled
+   *  task that waited for it may start). */
+  onSettled?: () => void;
 }
 
 interface Snapshot {
@@ -99,6 +102,8 @@ export class Learner {
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
   private lastError = "";
+  /** memory.learn requests on the wire (the model is in use). */
+  private inFlight = 0;
 
   constructor(
     private readonly bridge: Pick<Bridge, "request">,
@@ -126,6 +131,11 @@ export class Learner {
     if (m) this.codeLog.push(m);
     if (schedule) this.schedule(this.codeLog, model, session);
     else this.remember(this.codeLog, model, session);
+  }
+
+  /** A memory.learn is asking the model now. */
+  get learning(): boolean {
+    return this.inFlight > 0;
   }
 
   /** The code conversation's user messages (for /memoryadd). */
@@ -190,12 +200,19 @@ export class Learner {
     await this.whenIdle();
     if (this.closed) return;
     try {
-      const d = await this.bridge.request<{ changes?: MemoryChange[]; cursor?: number }>("memory.learn", {
-        messages: s.messages,
-        cursor: ref.cursor,
-        model: s.model,
-        session: s.session,
-      });
+      let d: { changes?: MemoryChange[]; cursor?: number };
+      this.inFlight++;
+      try {
+        d = await this.bridge.request<{ changes?: MemoryChange[]; cursor?: number }>("memory.learn", {
+          messages: s.messages,
+          cursor: ref.cursor,
+          model: s.model,
+          session: s.session,
+        });
+      } finally {
+        this.inFlight--;
+        this.o.onSettled?.();
+      }
       if (typeof d?.cursor === "number") ref.cursor = d.cursor;
       const changes = Array.isArray(d?.changes) ? d.changes : [];
       if (!changes.length) return;

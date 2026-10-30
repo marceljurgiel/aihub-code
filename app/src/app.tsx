@@ -17,6 +17,7 @@ import { Footer } from "./footer/Footer";
 import { AppKeymapProvider } from "./hub/keymap/AppKeymap";
 import { adaptBridge, BridgeProvider } from "./hub/state/BridgeContext";
 import { clampFooterHeight, debounced, exitLine, footerBudget, messagesToLines, userPrompts } from "./replay";
+import { SchedulerHost } from "./panels/SchedulerHost";
 import { Transcript, rendererSink, type RendererSink } from "./scrollback";
 import { Controller, type Bridge } from "./session/controller";
 
@@ -210,11 +211,13 @@ export function launch(o: LaunchOptions): Launched {
     }
   }
 
-  // AIhub's windows (panels) need its keymap and its bridge context.
+  // AIhub's windows (panels) need its keymap and its bridge context; so does
+  // its clock for scheduled tasks (SchedulerHost draws nothing).
   createRoot(renderer).render(
     <AppKeymapProvider>
       <BridgeProvider client={adaptBridge(bridge)}>
         <FooterHost renderer={renderer} controller={controller} history={prompts} />
+        <SchedulerHost controller={controller} />
       </BridgeProvider>
     </AppKeymapProvider>,
   );

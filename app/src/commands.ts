@@ -64,7 +64,7 @@ export const COMMANDS: Command[] = [
   { name: "mcp", help: "Connections: Google, GitHub and other services", run: panel("mcp") },
   { name: "kb", args: "[name…|off]", help: "Answer from a knowledge base in this chat, or list them", run: (c, arg) => c.applyKb(arg.trim()) },
   { name: "knowledge", help: "Knowledge bases: search your own documents", run: panel("knowledge") },
-  { name: "schedule", args: "[run <name>]", help: "Scheduled tasks: agents on a timetable", run: panelOr("schedule", (c, a) => soon(c, `/schedule ${a}`)) },
+  { name: "schedule", args: "[run <name>]", help: "Scheduled tasks: agents on a timetable", run: panelOr("schedule", (c, a) => schedule(c, a)) },
   { name: "history", help: "AIhub's saved conversations", run: panel("history") },
   { name: "memory", args: "[save|clear|undo]", help: "Edit what AIhub remembers about you", run: panelOr("memory", (c, a) => memory(c, a)) },
   { name: "memoryadd", help: "Auto-extract facts from this chat → memory", run: (c) => memoryAdd(c) },
@@ -164,12 +164,29 @@ async function memoryAdd(c: Controller): Promise<void> {
   if (!c.requireSession()) return;
   const { phase, model } = c.getState();
   if (phase === "running" || phase === "permission") return c.note("Finish or interrupt the current turn first (Esc).");
+  const task = c.getState().taskRunning;
+  if (task) return c.note(`Task ${task} is using the model \u2014 try again when it is done.`);
   if (!model) return c.error("No model selected.");
   c.note("Extracting facts from this chat…");
   await c.request<{ ok?: boolean; summary?: string }>("memory.extract", { model, messages: c.conversationMessages() }).then((d) => {
     if (d?.ok) c.note("Memory updated with extracted facts.");
     else c.error(String(d?.summary ?? "Extracting memory failed."));
   }, failed(c, "Extracting memory"));
+}
+
+// ── /schedule ─────────────────────────────────────────────────────────────────
+
+/** `/schedule run <name>` (AIhub's schedule_run): the task must exist; it
+ *  runs after whatever has the model. */
+async function schedule(c: Controller, arg: string): Promise<void> {
+  const m = /^run(?:\s+([\s\S]*))?$/i.exec(arg);
+  if (!m) return c.note("usage: /schedule, or /schedule run <name>");
+  const name = oneLine(m[1] ?? "").trim();
+  if (!name) return void c.openPanel("schedule");
+  await c.request<{ tasks?: { name: string }[] }>("schedule.list", {}).then((d) => {
+    if (!(d?.tasks || []).some((t) => t.name === name)) return c.error(`No task named ${name} \u2014 /schedule to see tasks.`);
+    if (c.runTask(name)) c.note(`Running task ${name}\u2026`);
+  }, failed(c, "Listing tasks"));
 }
 
 // ── /undo ─────────────────────────────────────────────────────────────────────

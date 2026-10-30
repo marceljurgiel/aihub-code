@@ -69,30 +69,46 @@ export function runAction(c: Controller, id: ActionId): void {
   if (id === "quit") return c.exit();
 }
 
-/** The missed-run panel's `arg`: the missed tasks as JSON (Task 9 opens it). */
-function missedTasks(arg: string | undefined): MissedTask[] {
+/** The missed panel's `arg` (controller.askMissed): one missed task as JSON,
+ *  `{task, index, total}` — AIhub asks about them one at a time. */
+function missedArg(arg: string | undefined): { task: MissedTask; index: number; total: number } {
+  const none = { task: { name: "", when: "", slot: "" }, index: 0, total: 1 };
   try {
-    const v = JSON.parse(arg ?? "[]");
-    return Array.isArray(v) ? v : [];
+    const v = JSON.parse(arg ?? "");
+    if (!v || typeof v !== "object" || !v.task) return none;
+    return { task: v.task, index: Number(v.index) || 0, total: Math.max(1, Number(v.total) || 1) };
   } catch {
-    return [];
+    return none;
   }
 }
 
-function MissedPanel({ c, tasks, close }: { c: Controller; tasks: MissedTask[]; close: () => void }) {
-  // One at a time, as AIhub asks them at start-up.
-  const task = tasks[0] ?? { name: "", when: "", slot: "" };
+function MissedPanel({ c, arg, close }: { c: Controller; arg: string | undefined; close: () => void }) {
+  const { task, index, total } = missedArg(arg);
   return (
     <MissedTasksModal
       task={task}
-      index={0}
-      total={Math.max(1, tasks.length)}
+      index={index}
+      total={total}
       onClose={(choice) => {
-        soon(c, choice === "run" ? `Running the missed task ${task.name}` : `Skipping the missed task ${task.name}`);
+        // The clock runs it (queued) or records the skip.
+        c.answerMissed(choice);
         close();
       }}
     />
   );
+}
+
+/** A task's last run, as AIhub opens it (ChatScreen openTaskSession): the
+ *  saved session continues under chat, the current model stays. */
+async function openTaskSession(c: Controller, sess: { model: string; filename: string }): Promise<void> {
+  try {
+    const d = await c.request<{ messages?: any[]; start_time?: string }>("history.load", { model: sess.model, filename: sess.filename });
+    if (!(await c.loadHistory(d?.messages || [], d?.start_time))) return;
+    const active = c.getState().model;
+    if (active && sess.model !== active) c.note(`Session from ${sess.model} \u2014 the current model stays ${active}.`);
+  } catch (e) {
+    c.error(`Opening the task's session failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
@@ -147,15 +163,16 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
       return (close) => (
         <ScheduleModal
           onClose={() => close()}
-          running={() => null}
-          onRunNow={(name) => soon(c, `Running the task ${name}`)}
-          onCancelRun={() => soon(c, "Cancelling the running task")}
-          onOpenSession={(sess) => soon(c, `Opening the task's session (${sess.filename})`)}
+          running={() => c.tasks?.isRunning() ?? null}
+          lastEnded={() => c.tasks?.lastEnded() ?? { name: "", n: 0 }}
+          onRunNow={(name) => void c.runTask(name)}
+          onCancelRun={() => c.cancelTask()}
+          onOpenSession={(sess) => void openTaskSession(c, sess)}
           current={{ model: s.modelName ?? "", backend: s.backend, streamModel }}
         />
       );
     case "missed":
-      return (close) => <MissedPanel c={c} tasks={missedTasks(ctx.arg)} close={() => close()} />;
+      return (close) => <MissedPanel c={c} arg={ctx.arg} close={() => close()} />;
     case "history":
       return (close) => (
         <HistoryModal model={s.modelName} onLoad={(messages, startTime) => void c.loadHistory(messages, startTime)} onClose={() => close()} />

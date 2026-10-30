@@ -391,6 +391,7 @@ export function Footer(props: FooterProps) {
     model: sanitize(st.model),
     ctx: st.ctx,
     queued: st.queue.length,
+    task: st.taskRunning,
     hint,
   };
 
