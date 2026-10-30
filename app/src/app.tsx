@@ -9,7 +9,8 @@
  */
 import type { CliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { constants, homedir } from "node:os";
+import { constants } from "node:os";
+import { homeDir } from "./home";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Args } from "./args";
 import { SLASH_COMMANDS, commandTable } from "./commands";
@@ -151,7 +152,7 @@ export function launch(o: LaunchOptions): Launched {
     sink,
     width: () => renderer.width,
     cwd: o.cwd,
-    home: o.home ?? homedir(),
+    home: o.home ?? homeDir(),
     commands: commandTable(),
     onResume: (messages) => {
       sink.write(messagesToLines(messages, renderer.width));

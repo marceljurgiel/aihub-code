@@ -11,7 +11,9 @@ process.env.AIHUB_CODE_ERR_LOG = join(mkdtempSync(join(tmpdir(), "aihub-code-tes
 process.env.AIHUB_LEARN_IDLE_MS = "80";
 
 // Tests never touch the real ~/.aihub (theme and settings files, caches): the
-// home directory is a temp one for the whole run.
+// home directory is a temp one for the whole run. Bun's os.homedir() ignores a
+// HOME set at runtime, so the app reads it through homeDir() (src/home.ts),
+// which follows this env; home.test.ts guards it.
 const home = mkdtempSync(join(tmpdir(), "aihub-code-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;

@@ -21,28 +21,21 @@ export function themeId(arg: string): string | null {
 }
 
 /**
- * Keep a theme: aihub-code's own settings file holds the theme (AIhub's
- * `theme:` in config.yaml is ignored: ruling R-T2-2). The accent is AIhub's
- * shared setting, so it goes to config.yaml when `accent` is given (the Theme
- * window); `/theme <name>` leaves it alone.
+ * Keep a theme: aihub-code's own settings file holds the theme and the accent
+ * (AIhub's `theme:` and `accent:` in config.yaml are not ours to write, and
+ * its theme is ignored: rulings R-T2-2, R-T10-2). `/theme <name>` leaves the
+ * accent alone; the Theme window passes the chosen one ("" = the theme's own).
  */
 export async function saveTheme(c: Controller, name: string, accent: string | null = null): Promise<void> {
   applyTheme(name, accent ?? activeTheme.accent);
   try {
-    saveCodeTheme(activeTheme.name);
+    saveCodeTheme(activeTheme.name, accent === null ? undefined : activeTheme.accent);
   } catch (e) {
     return c.error(`Saving the theme failed: ${errText(e)}`);
   }
-  if (accent !== null) {
-    try {
-      await c.request("config.set", { patch: { accent } });
-    } catch (e) {
-      c.error(`Saving the accent failed: ${errText(e)}`);
-    }
-  }
   const id = activeTheme.name;
   const acc = activeTheme.accent;
-  c.note(`Theme → ${THEMES[id]?.label ?? id}${acc ? `, ${ACCENTS[acc]?.label} accent` : ""}.`);
+  c.note(`Theme \u2192 ${THEMES[id]?.label ?? id}${acc ? `, ${ACCENTS[acc]?.label} accent` : ""}.`);
 }
 
 /** `/theme <name>` (the window without a name). */

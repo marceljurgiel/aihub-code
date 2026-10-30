@@ -5,7 +5,9 @@ import { mount, unmount, until, type Mounted } from "../footer/test-utils";
 import { AppKeymapProvider } from "../hub/keymap/AppKeymap";
 import { adaptBridge, BridgeProvider } from "../hub/state/BridgeContext";
 import { activeTheme, applyTheme, THEMES } from "../hub/theme";
-import { applyConfigAccent, codeSettingsPath, palette } from "../theme";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ACCENTS, applyConfigAccent, codeSettingsPath, palette } from "../theme";
 import { toSessionLike } from "./session-adapter";
 
 let m: Mounted | undefined;
@@ -95,21 +97,58 @@ describe("/theme and the Theme window", () => {
     expect(existsSync(codeSettingsPath())).toBe(false);
   });
 
-  test("the Theme window's Enter writes the same place (and the accent, which AIhub shares, to its config)", async () => {
+  test("the Theme window's Enter writes theme and accent to aihub-code's settings and sends NO config.set (AIhub's config is not ours)", async () => {
     m = await mountPanels(engine());
     const mm = m;
     mm.c.openPanel("theme");
     await until(() => titled(mm, "Theme"), mm.settle);
     mm.setup.mockInput.pressArrow("down"); // terminal -> aihub
     mm.setup.mockInput.pressArrow("down"); // -> tokyo-night
+    mm.setup.mockInput.pressArrow("right"); // -> purple accent
     await mm.settle();
     mm.setup.mockInput.pressEnter();
     await until(() => mm.c.getState().panel === null, mm.settle);
-    expect(JSON.parse(readFileSync(codeSettingsPath(), "utf8")).theme).toBe("tokyo-night");
-    expect(palette.accent).toBe(THEMES["tokyo-night"]!.palette.accent as string);
-    expect(mm.bridge.to("config.set").map((c) => (c.params.patch as Record<string, unknown>).theme)).toEqual([undefined]);
-    expect(mm.bridge.to("config.set")[0]!.params.patch).toEqual({ accent: "" });
-    expect(noted(mm)).toContain("Theme → Tokyo Night");
+    expect(JSON.parse(readFileSync(codeSettingsPath(), "utf8"))).toEqual({ theme: "tokyo-night", accent: "purple" });
+    expect(mm.bridge.to("config.set")).toHaveLength(0);
+    expect(noted(mm)).toContain("Theme \u2192 Tokyo Night");
+  });
+
+  test("an accent, then \"Theme's own\": the palette takes the theme's own accent at once", async () => {
+    m = await mountPanels(engine());
+    const mm = m;
+    mm.c.openPanel("theme");
+    await until(() => titled(mm, "Theme"), mm.settle);
+    mm.setup.mockInput.pressArrow("down"); // aihub
+    mm.setup.mockInput.pressArrow("right"); // purple
+    mm.setup.mockInput.pressArrow("right"); // blue
+    await mm.settle();
+    mm.setup.mockInput.pressEnter();
+    await until(() => mm.c.getState().panel === null, mm.settle);
+    expect(palette.accent).toBe(ACCENTS.blue);
+    expect(JSON.parse(readFileSync(codeSettingsPath(), "utf8")).accent).toBe("blue");
+    // Back to the terminal theme with its own accent.
+    mm.c.openPanel("theme");
+    await until(() => titled(mm, "Theme"), mm.settle);
+    mm.setup.mockInput.pressArrow("up"); // terminal
+    mm.setup.mockInput.pressArrow("left"); // purple
+    mm.setup.mockInput.pressArrow("left"); // theme's own
+    await mm.settle();
+    mm.setup.mockInput.pressEnter();
+    await until(() => mm.c.getState().panel === null, mm.settle);
+    expect(activeTheme).toEqual({ name: "terminal", accent: "" });
+    expect(palette.accent).toBe(THEMES.terminal!.palette.accent as string);
+    expect(JSON.parse(readFileSync(codeSettingsPath(), "utf8")).accent).toBe("");
+    expect(mm.bridge.to("config.set")).toHaveLength(0);
+  });
+
+  test("a stale start-up accent from config.yaml does not outlive \"Theme's own\"", async () => {
+    m = await mountPanels(engine());
+    applyConfigAccent(join(tmpdir(), `cfg-${process.pid}.yaml`)); // none
+    applyTheme("terminal", "orange"); // as start-up does with config.yaml's accent
+    expect(palette.accent).toBe(ACCENTS.orange);
+    await m.c.runCommand("theme", "terminal");
+    applyTheme("terminal", "");
+    expect(palette.accent).toBe(THEMES.terminal!.palette.accent as string);
   });
 
   test("Esc in the Theme window puts the old theme back and saves nothing", async () => {

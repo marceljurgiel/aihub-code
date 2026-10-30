@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ACCENTS, DEFAULT_ACCENT, accentFromConfig, applyConfigAccent, configPath, modeColor, palette } from "./theme";
+import { ACCENTS, DEFAULT_ACCENT, accentFromConfig, codeAccent, applyConfigAccent, configPath, modeColor, palette } from "./theme";
 
 const dir = mkdtempSync(join(tmpdir(), "aihub-code-theme-"));
 let n = 0;
@@ -59,4 +59,19 @@ test("semantic colours are terminal palette slots, so they follow the terminal t
   expect(palette.green).toBe("ansi:2");
   expect(palette.red).toBe("ansi:1");
   expect(palette.yellow).toBe("ansi:3");
+});
+
+describe("codeAccent (aihub-code's own accent setting; config.yaml's is only the fallback)", () => {
+  const settings = (text: string) => {
+    const p = join(dir, `settings-${n++}.json`);
+    writeFileSync(p, text);
+    return p;
+  };
+  test("a name, \"\" (the theme's own) and unset are told apart", () => {
+    expect(codeAccent(settings('{"accent":"Blue"}'))).toBe("blue");
+    expect(codeAccent(settings('{"accent":""}'))).toBe("");
+    expect(codeAccent(settings('{"theme":"nord"}'))).toBeUndefined();
+    expect(codeAccent(settings("not json"))).toBeUndefined();
+    expect(codeAccent(join(dir, "none.json"))).toBeUndefined();
+  });
 });

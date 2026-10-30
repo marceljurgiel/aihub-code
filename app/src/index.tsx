@@ -3,7 +3,7 @@ import { IDLE_FOOTER_ROWS, launch } from "./app";
 import { parseArgs } from "./args";
 import { BridgeClient } from "./bridge/client";
 import { applyTheme } from "./hub/theme";
-import { applyConfigAccent, codeTheme, configKey } from "./theme";
+import { applyConfigAccent, codeAccent, codeTheme, configKey } from "./theme";
 
 // A split-footer renderer: the transcript is written to the terminal's own
 // scrollback, only the footer is redrawn. Printed output (console.log, stray
@@ -14,8 +14,8 @@ import { applyConfigAccent, codeTheme, configKey } from "./theme";
 applyConfigAccent();
 // AIhub's windows: aihub-code's own theme setting (none: the "terminal" theme,
 // no backgrounds, the terminal's own colours; AIhub's `theme:` is ignored) and
-// AIhub's accent, as the rest of the app uses it.
-applyTheme(codeTheme(), configKey("accent"));
+// its own accent setting, else AIhub's (config.yaml, read-only here).
+applyTheme(codeTheme(), codeAccent() ?? configKey("accent"));
 const renderer = await createCliRenderer({
   screenMode: "split-footer",
   footerHeight: IDLE_FOOTER_ROWS,

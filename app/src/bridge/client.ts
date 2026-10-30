@@ -6,7 +6,7 @@
  */
 import { sanitizingReviver } from "./sanitize.ts";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { homeDir } from "../home";
 import { dirname, join } from "node:path";
 import type { BridgeMessage, StreamHandlers } from "./types.ts";
 
@@ -20,7 +20,7 @@ type Env = Record<string, string | undefined>;
 
 /** ~/.aihub/aihub-code-bridge.err.log, or AIHUB_CODE_ERR_LOG (the test preload
  *  points it at a temp file so test runs don't write into the user's log). */
-export function bridgeErrLogPath(env: Env = process.env, home: string = homedir()): string {
+export function bridgeErrLogPath(env: Env = process.env, home: string = homeDir(env)): string {
   return env.AIHUB_CODE_ERR_LOG || join(home, ".aihub", "aihub-code-bridge.err.log");
 }
 

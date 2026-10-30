@@ -4,7 +4,7 @@
  * Every formatter fits its output into the terminal width it is given, and
  * strips terminal escapes from text that came from the model or a tool.
  */
-import { homedir } from "node:os";
+import { homeDir } from "../home";
 import { G } from "../glyphs";
 import type { Line, Span } from "../scrollback";
 import { palette } from "../theme";
@@ -297,7 +297,7 @@ function homeRelative(root: string, home: string): string {
 export function fmtHeader(info: HeaderInfo, width: number): Line[] {
   const head = ` aihub-code ${oneLine(info.version)} ${G.sep} ${oneLine(info.model)} ${G.sep} ${oneLine(info.mode)} ${G.sep} `;
   const nameWidth = " aihub-code".length;
-  let path = oneLine(homeRelative(info.root, info.home ?? homedir()));
+  let path = oneLine(homeRelative(info.root, info.home ?? homeDir()));
   let tail = info.branch ? ` (${oneLine(info.branch)})` : "";
   const fixed = displayWidth(head);
   // The path gives way first, then the branch; the line never wraps.
