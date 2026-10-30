@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTerminalDimensions } from "@opentui/react";
 import { singleLinePaste } from "../clipboard.ts";
-import { theme, fit, lift } from "../theme.ts";
+import { theme, fit, flatTheme, lift } from "../theme.ts";
 import { useBridge } from "../state/BridgeContext.tsx";
 import { useModals } from "../state/ModalContext.tsx";
 import { ModalShell, useShellHeight, useShellWidth } from "../ui/ModalShell.tsx";
@@ -58,7 +58,9 @@ function FieldRow({
     // Fixed-size row: a long value must scroll inside the field, not widen it
     // (a pasted URL used to squeeze the label and push the rows below down).
     <box flexDirection="row" height={1} flexShrink={0} onMouseDown={onFocus}>
-      <text flexShrink={0} fg={focused ? theme.accent : theme.fg2}>{`  ${label.padEnd(18)}`}</text>
+      {/* aihub-code: under the see-through terminal theme bg3 shows nothing, so
+          the focused field's label is reverse video (lift). */}
+      <text flexShrink={0} fg={focused ? (flatTheme() ? theme.fg0 : theme.accent) : theme.fg2} attributes={lift(focused)}>{`  ${label.padEnd(18)}`}</text>
       <box
         flexGrow={1}
         flexShrink={1}
@@ -118,6 +120,7 @@ export function SettingsModal({
   onPatchSession,
   onEngineChanged,
   onTemperature,
+  fixedWorkdir,
   onClose,
 }: {
   session: SessionState;
@@ -125,6 +128,9 @@ export function SettingsModal({
   onEngineChanged?: (change: EngineChange) => void;
   /** Applies and saves a new temperature (the same path as /temp). */
   onTemperature?: (t: number) => void;
+  /** aihub-code: the folder the tools work in is the one it was started in
+   *  (no /cd): shown read-only, never a field, never saved. */
+  fixedWorkdir?: string;
   onClose: () => void;
 }) {
   const bridge = useBridge();
@@ -206,7 +212,7 @@ export function SettingsModal({
       }
       const patch: Record<string, unknown> = {
         ollama_api_url: v.ollama,
-        project_dir: v.workdir,
+        ...(fixedWorkdir === undefined ? { project_dir: v.workdir } : {}),
         default_chat_model: v.model.trim() || cfg.default_chat_model,
         memory_model: v.memoryModel.trim(),
         ollama_gpu_memory_gb: gpuN,
@@ -248,8 +254,9 @@ export function SettingsModal({
 
   const moveFocus = (step: number) =>
     setFocus((f) => {
-      const i = f == null ? (step > 0 ? -1 : 0) : FIELDS.indexOf(f);
-      return FIELDS[(i + step + FIELDS.length) % FIELDS.length]!;
+      const ring = fixedWorkdir === undefined ? FIELDS : FIELDS.filter((x) => x !== "workdir");
+      const i = f == null ? (step > 0 ? -1 : 0) : ring.indexOf(f);
+      return ring[(i + step + ring.length) % ring.length]!;
     });
 
   /** The context window for the current model, by hand or automatic. */
@@ -342,13 +349,20 @@ export function SettingsModal({
         {labels ? <SectionLabel label="engine" width={width - 4} /> : null}
         {field("ollama", "Ollama server", ollama, setOllama, "http://localhost:11434")}
         {field("gpuMem", "Ollama GPU memory", gpuMem, setGpuMem, "GB · empty = learned from chats")}
-        {field(
-          "workdir",
-          "Working directory",
-          workdir,
-          setWorkdir,
-          // Empty = the launch directory; show which one that currently is.
-          `empty = launch dir (${fit(cfg?.workdir ?? "…", width - 48)})`,
+        {fixedWorkdir !== undefined ? (
+          <box flexDirection="row" height={1} flexShrink={0}>
+            <text fg={theme.fg2}>{`  ${"Working directory".padEnd(18)}`}</text>
+            <text fg={theme.fg0}>{` ${fit(`${fixedWorkdir} (this folder)`, width - 26)}`}</text>
+          </box>
+        ) : (
+          field(
+            "workdir",
+            "Working directory",
+            workdir,
+            setWorkdir,
+            // Empty = the launch directory; show which one that currently is.
+            `empty = launch dir (${fit(cfg?.workdir ?? "…", width - 48)})`,
+          )
         )}
 
         <box marginTop={gaps ? 1 : 0} flexDirection="column">

@@ -51,7 +51,7 @@ describe("idle footer", () => {
       "╭" + "─".repeat(78) + "╮",
       "│ >" + " ".repeat(76) + "│",
       "╰" + "─".repeat(78) + "╯",
-      " build · m · ctx 0% · shift+tab mode · /help",
+      " m · build · ctx 0% · shift+tab mode · /help",
     ]);
   });
 
@@ -59,7 +59,7 @@ describe("idle footer", () => {
     m = await running();
     m.bridge.lastStream.emit("code_context", { used: 120, limit: 1000 });
     await m.settle();
-    expect(text(m)).toContain("build · m · ctx 12% · shift+tab mode · /help");
+    expect(text(m)).toContain("m · build · ctx 12% · shift+tab mode · /help");
   });
 
   test("the mode word and the box border carry the mode's colour", async () => {
@@ -311,7 +311,7 @@ describe("mode", () => {
     m = await mount();
     await press(m, "tab", { shift: true });
     expect(m.c.getState().mode).toBe("auto");
-    expect(text(m)).toContain("auto · m");
+    expect(text(m)).toContain("m · auto");
     await press(m, "tab", { shift: true });
     expect(m.c.getState().mode).toBe("plan");
     expect(m.bridge.to("code.mode").map((c) => c.params.mode)).toEqual(["auto", "plan"]);
@@ -1058,9 +1058,9 @@ describe("hub kinds (chat, AIhub agents)", () => {
     m = await mount({ answers: HUB_ANSWERS });
     await m.c.setKind({ type: "chat" });
     await m.settle();
-    expect(text(m)).toContain("chat · m");
+    expect(text(m)).toContain("m · chat");
     expect(text(m)).not.toContain("shift+tab mode");
-    expect(text(m)).not.toMatch(/build · m/);
+    expect(text(m)).not.toMatch(/m · build/);
     await press(m, "tab", { shift: true });
     expect(m.c.getState().kind).toEqual({ type: "chat" });
     expect(m.bridge.to("code.mode")).toHaveLength(0);
@@ -1070,9 +1070,9 @@ describe("hub kinds (chat, AIhub agents)", () => {
     m = await mount({ answers: HUB_ANSWERS });
     await m.c.setKind({ type: "agent", name: "reviewer", submode: "build" });
     await m.settle();
-    expect(text(m)).toContain("agent reviewer · build · m");
+    expect(text(m)).toContain("m · agent reviewer · build");
     await press(m, "tab", { shift: true });
-    expect(text(m)).toContain("agent reviewer · plan · m");
+    expect(text(m)).toContain("m · agent reviewer · plan");
     expect(m.bridge.to("code.mode")).toHaveLength(0);
   });
 

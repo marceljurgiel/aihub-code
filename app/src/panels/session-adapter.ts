@@ -4,9 +4,10 @@
  * kind. aihub-code's session is the controller's: this builds AIhub's shape
  * from it.
  *
- * Fields the controller doesn't track yet get AIhub's defaults (initialSession):
- *  - memoryEnabled / toolsEnabled true (Task 10, from config).
- * The knowledge bases are the conversation's (`/kb`).
+ * What the controller doesn't track (messages, speed, the online flags) keeps
+ * AIhub's defaults (initialSession). The memory and tools switches are the
+ * controller's (Settings changes them); the knowledge bases are the
+ * conversation's (`/kb`).
  * The kind maps onto AIhub's mode: plain chat is "chat", an AIhub agent is
  * "agent" with its name and submode, and the code agent is shown as an agent
  * named "code", its submode following plan / build (auto counts as build).
@@ -36,6 +37,8 @@ export function toSessionLike(s: ControllerState): SessionLike {
     ctxUsed: s.ctx.used,
     ...kindFields(s),
     knowledge: s.knowledge,
+    memoryEnabled: s.memoryEnabled,
+    toolsEnabled: s.toolsEnabled,
     streaming: s.phase === "running" || s.phase === "permission",
   };
 }

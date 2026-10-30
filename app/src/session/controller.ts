@@ -174,6 +174,10 @@ export interface ControllerState {
   kbNames: string[];
   /** The scheduled task running now (it has the model), or null. */
   taskRunning: string | null;
+  /** AIhub's Settings switches: tools for chat and agent turns (the code
+   *  agent always has its tools), and memory (the engine reads it itself). */
+  toolsEnabled: boolean;
+  memoryEnabled: boolean;
 }
 
 /** What SchedulerHost hands the controller of AIhub's clock (useScheduler). */
@@ -277,6 +281,8 @@ export class Controller {
     mcp: false,
     kbNames: [],
     taskRunning: null,
+    toolsEnabled: true,
+    memoryEnabled: true,
   };
   private listeners = new Set<() => void>();
   private turn: Turn | null = null;
@@ -314,7 +320,7 @@ export class Controller {
   // /kb or /mcp changed something: a new code session carries it over.
   private optsTouched = false;
   private kbList: { name: string; description: string }[] = [];
-  private codeSnap: { model: string; backend: Backend; streamModel: string; ctx: { used: number; limit: number } } | null = null;
+  private codeSnap: { model: string; backend: Backend; streamModel: string; ctx: { used: number; limit: number }; resume: string } | null = null;
   // Plain chat's context while an agent enlarged it (AIhub restores it).
   private chatCtx: number | null = null;
   // Code sessions whose resume line is already in the transcript.
@@ -322,7 +328,6 @@ export class Controller {
   // A kind switch (or a new hub conversation) is under way.
   private switching = false;
   // From AIhub's settings, for chat.turn.
-  private toolsEnabled = true;
   private defaultContext = 2048;
   // Automatic memory: learns after turns, once the user has gone quiet.
   private readonly learner: Learner;
@@ -397,6 +402,11 @@ export class Controller {
     this.write(fmtNote(text, this.o.width()));
   }
 
+  /** The folder aihub-code was started in (the tools work there). */
+  cwd(): string {
+    return this.o.cwd ?? process.cwd();
+  }
+
   /** A bridge call for the commands. */
   request<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     return this.o.bridge.request<T>(method, params);
@@ -418,7 +428,7 @@ export class Controller {
       if (this.o.bridge.deadError()) return this.failStart(e);
       this.note(`could not read AIhub's settings: ${errText(e)}`);
     }
-    this.toolsEnabled = config.tools_enabled !== false;
+    this.set({ toolsEnabled: config.tools_enabled !== false, memoryEnabled: config.memory_enabled !== false });
     this.defaultContext = Number(config.default_context_length) || 2048;
     const cwd = this.o.cwd ?? process.cwd();
     try {
@@ -716,7 +726,7 @@ export class Controller {
     if (hub) {
       hub.temperature = this.state.temperature;
       hub.contextLength = this.contextLength();
-      hub.toolsEnabled = this.toolsEnabled;
+      hub.toolsEnabled = this.state.toolsEnabled;
       this.startStream("chat.turn", hub.params(body, ids), "thinking…", hub, true);
       return;
     }
@@ -1347,7 +1357,7 @@ export class Controller {
       await this.switchWith(() => this.openHub(k, this.current(), { fresh: true }));
       return;
     }
-    await this.replaceSession(() => this.startSession(this.state.model, false, { mode: this.state.mode, fresh: { previous: this.resumableSessionId() } }));
+    await this.replaceSession(() => this.startSession(this.state.model, false, { mode: this.state.mode, fresh: { previous: this.codeResumeId() } }));
   }
 
   /** `/model [name]`: a new session on another model (the old one stays
@@ -1408,6 +1418,22 @@ export class Controller {
     }
     this.set({ temperature: v });
     this.note(`Temperature \u2192 ${v.toFixed(1)}.`);
+  }
+
+  /** Settings changed something the session shows (AIhub's onPatchSession):
+   *  the tools and memory switches, and a context size set by hand. The code
+   *  agent's session has its context size from its start, so for it the new
+   *  size is for the next session. */
+  patchSession(p: { toolsEnabled?: boolean; memoryEnabled?: boolean; contextLength?: number; ctxMax?: number }): void {
+    const patch: Partial<ControllerState> = {};
+    if (typeof p.toolsEnabled === "boolean") patch.toolsEnabled = p.toolsEnabled;
+    if (typeof p.memoryEnabled === "boolean") patch.memoryEnabled = p.memoryEnabled;
+    const n = p.contextLength;
+    if (typeof n === "number" && n > 0) {
+      if (this.state.kind.type === "code") this.note(`Context ${n.toLocaleString()} tokens is saved \u2014 the code agent uses it from its next session (/new).`);
+      else patch.ctx = { ...this.state.ctx, limit: n };
+    }
+    this.set(patch);
   }
 
   /** Nothing can start a turn while a list loads, but if one did, the picker
@@ -1479,9 +1505,16 @@ export class Controller {
   resumableSessionId(): string {
     // Under chat or an agent the code session's line is in the transcript
     // already (written when it went behind); it is written once.
-    if (this.state.kind.type !== "code") return "";
-    const id = this.state.sessionId && (this.turnsSent > 0 || this.resumed) ? this.state.sessionId : "";
+    const id = this.codeResumeId();
     return id && !this.resumeLineShown.has(id) ? id : "";
+  }
+
+  /** The code session in front, if it is worth resuming (it had a turn, or
+   *  was resumed), whether or not its line was written already: a fresh screen
+   *  (/new, /clear) clears that line, and then it is written again. */
+  private codeResumeId(): string {
+    if (this.state.kind.type !== "code") return "";
+    return this.state.sessionId && (this.turnsSent > 0 || this.resumed) ? this.state.sessionId : "";
   }
 
   // ── memory and skills ──────────────────────────────────────────────────────
@@ -1828,7 +1861,7 @@ export class Controller {
       this.note(exitLine(id)!);
     }
     const { model, backend, streamModel, ctx } = this.state;
-    this.codeSnap = { model, backend, streamModel, ctx };
+    this.codeSnap = { model, backend, streamModel, ctx, resume: this.codeResumeId() };
   }
 
   private async enterCode(): Promise<void> {
@@ -1868,6 +1901,9 @@ export class Controller {
     this.set({ kind: k, model: m.model, backend: m.backend, streamModel: m.streamModel, ctx: { used: 0, limit }, knowledge: [] });
     if (o.fresh) this.o.onFresh?.();
     this.write(fmtDivider(kindHeader(k, this.state.mode, m.model), this.o.width()));
+    // A fresh screen cleared the code session's resume line (written when it
+    // went behind): say it again, so the id is on the screen.
+    if (o.fresh && this.codeSnap?.resume) this.note(`Previous session: aihub-code --resume ${this.codeSnap.resume}`);
     // On entering an agent (not on /clear under it): what it can do.
     if (k.type === "agent" && o.check) this.note(agentNote(o.check.agent ?? { name: k.name }, k.submode, o.check, m.model, limit));
   }

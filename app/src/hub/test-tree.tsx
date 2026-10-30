@@ -24,6 +24,11 @@ export function HubTree({
   /** The panel's height in rows; omit for AIhub's own centred window. */
   footer?: number;
 }) {
+  // aihub-code: the windows change from outside React (bridge answers, timers),
+  // never inside act(); testRender turns React's act environment on, which
+  // warns about each such update. Off from the first render (as
+  // footer/test-utils does after its testRender).
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   // Tests never read the real system clipboard.
   const inner = (
     <>
@@ -90,6 +95,10 @@ export async function openWindow(
     </HubTree>,
     size,
   );
+  // aihub-code: the windows change from outside React (bridge answers, timers),
+  // not inside act(); testRender leaves React's act environment on, which
+  // warns about each such update (as footer/test-utils does, it goes off).
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   return { setup, closes, isOpen: () => ctl.open, reopen: () => ctl.set(true) };
 }
 

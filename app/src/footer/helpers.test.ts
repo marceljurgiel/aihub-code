@@ -56,21 +56,23 @@ describe("activityLine", () => {
 });
 
 describe("statusLine", () => {
-  const base = { mode: "build", model: "m", ctx: { used: 120, limit: 1000 }, queued: 0 };
+  // The items as statusItems gives them (model first, then the mode word).
+  const base = { mode: "build", items: ["m", "build", "ctx 12%"], queued: 0 };
 
-  test("mode · model · ctx · hints", () => {
-    expect(lineText(statusLine(base, 80))).toBe(" build · m · ctx 12% · shift+tab mode · /help");
+  test("model · mode · ctx · hints", () => {
+    expect(lineText(statusLine(base, 80))).toBe(" m · build · ctx 12% · shift+tab mode · /help");
   });
 
   test("the mode word carries the mode colour", () => {
     for (const mode of ["plan", "build", "auto"]) {
-      const line = statusLine({ ...base, mode }, 80);
+      const line = statusLine({ ...base, mode, items: ["m", mode, "ctx 12%"] }, 80);
       expect(line.find((s) => s.text === mode)?.fg).toBe(modeColor(mode));
     }
   });
 
-  test("no ctx while the limit is unknown", () => {
-    expect(lineText(statusLine({ ...base, ctx: { used: 0, limit: 0 } }, 80))).not.toContain("ctx");
+  test("an agent's label is coloured as its submode", () => {
+    const line = statusLine({ ...base, mode: "agent w \u00b7 plan", items: ["m", "agent w \u00b7 plan"] }, 80);
+    expect(line.find((s) => s.text === "agent w \u00b7 plan")?.fg).toBe(modeColor("agent w \u00b7 plan"));
   });
 
   test("queued prompts sit on the right", () => {
@@ -81,20 +83,17 @@ describe("statusLine", () => {
 
   test("an armed Ctrl+C replaces the hints", () => {
     const t = lineText(statusLine({ ...base, hint: { text: "Press Ctrl+C again to exit", warn: true } }, 80));
-    expect(t).toBe(" build · m · ctx 12% · Press Ctrl+C again to exit");
+    expect(t).toBe(" m · build · ctx 12% · Press Ctrl+C again to exit");
   });
 
-  test("narrow: hints go first, then the model is cut; never wider than the terminal", () => {
+  test("narrow: hints go first, then the items from the end, then the model is cut; never wider than the terminal", () => {
+    const items = ["gpt-oss:120b-cloud · GPU 100% 6.0G", "build", "ctx 12%", "kb:1", "task nightly\u2026"];
     for (const w of [80, 50, 40, 30, 20, 12, 6, 1]) {
-      const line = statusLine({ ...base, model: "gpt-oss:120b-cloud", queued: 3 }, w);
+      const line = statusLine({ ...base, items, queued: 3 }, w);
       expect(lineWidth(line)).toBeLessThanOrEqual(w);
     }
-    expect(lineText(statusLine(base, 30))).toBe(" build · m · ctx 12%");
-  });
-
-  test("ctx rounds, and caps display at 100%", () => {
-    expect(lineText(statusLine({ ...base, ctx: { used: 1, limit: 1000 } }, 80))).toContain("ctx 0%");
-    expect(lineText(statusLine({ ...base, ctx: { used: 2000, limit: 1000 } }, 80))).toContain("ctx 100%");
+    expect(lineText(statusLine(base, 30))).toBe(" m · build · ctx 12%");
+    expect(lineText(statusLine({ ...base, items: ["m", "build", "ctx 12%", "task nightly\u2026"] }, 30))).toBe(" m · build · ctx 12%");
   });
 });
 

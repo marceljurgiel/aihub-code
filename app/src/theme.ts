@@ -7,7 +7,9 @@
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { activeTheme, subscribeTheme, theme as hubTheme } from "./hub/theme";
 
 /** AIhub's accent names (app/src/theme.ts in AIhub-TUI), purple is its default. */
 export const ACCENTS = {
@@ -79,8 +81,42 @@ export function codeTheme(path: string = codeSettingsPath()): string | undefined
 /** Set the live accent from the user's config; the default when there is none.
  * Called once at start-up (tests pass a temp file, never the real home). */
 export function applyConfigAccent(path?: string): void {
-  palette.accent = accentFromConfig(path) ?? DEFAULT_ACCENT;
+  configAccent = accentFromConfig(path);
+  syncPalette();
 }
+
+/** The accent config.yaml names, when it names one. */
+let configAccent: string | undefined;
+
+/** Save the hub theme in aihub-code's own settings file (other keys stay).
+ *  Throws when it can't be written. */
+export function saveCodeTheme(name: string, path: string = codeSettingsPath()): void {
+  let doc: Record<string, unknown> = {};
+  try {
+    const v = JSON.parse(readFileSync(path, "utf8"));
+    if (v && typeof v === "object" && !Array.isArray(v)) doc = v;
+  } catch {}
+  doc.theme = name;
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n");
+  renameSync(tmp, path);
+}
+
+/** The colours the transcript and the footer use follow the hub theme: the
+ *  terminal theme keeps the terminal's own 16-colour slots (and the accent
+ *  config.yaml or the Theme window names); any other theme gives its accent
+ *  and its success / error / warn colours. */
+export function syncPalette(): void {
+  const terminal = activeTheme.name === "terminal";
+  const own = (c: unknown, slot: string): string => (!terminal && typeof c === "string" ? c : slot);
+  palette.accent = terminal && !activeTheme.accent ? (configAccent ?? DEFAULT_ACCENT) : (hubTheme.accent as string);
+  palette.green = own(hubTheme.success, "ansi:2");
+  palette.red = own(hubTheme.error, "ansi:1");
+  palette.yellow = own(hubTheme.warn, "ansi:3");
+}
+
+subscribeTheme(syncPalette);
 
 export function modeColor(mode: string): string {
   // "plan", or an AIhub agent's "agent <name> · plan".

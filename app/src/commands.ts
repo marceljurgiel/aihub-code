@@ -7,6 +7,7 @@
 import type { SlashCommand } from "./footer/SlashSuggest";
 import type { Line, Span } from "./scrollback";
 import type { CommandFn, Controller, PanelId } from "./session/controller";
+import { themeCommand, toolsCommand, websearchCommand } from "./session/hubSettings";
 import { fmtMemoryChange, type MemoryChange } from "./session/learn";
 import { fmtNote } from "./transcript/format";
 import { displayWidth, sanitize, stripCR, wrapSpans } from "./width";
@@ -23,9 +24,6 @@ export interface Command {
 const dim = (text: string): Span => ({ text, dim: true });
 const oneLine = (t: unknown): string => sanitize(stripCR(String(t ?? ""))).replace(/\n/g, " ");
 const tokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
-
-/** A command whose text form a later task brings (the panel opens without one). */
-const soon = (c: Controller, what: string) => c.note(`${what} — coming in this release`);
 
 /** Opens an AIhub window; an argument (the window takes none) is ignored. */
 const panel = (id: PanelId): CommandFn => (c) => void c.openPanel(id);
@@ -69,7 +67,9 @@ export const COMMANDS: Command[] = [
   { name: "memory", args: "[save|clear|undo]", help: "Edit what AIhub remembers about you", run: panelOr("memory", (c, a) => memory(c, a)) },
   { name: "memoryadd", help: "Auto-extract facts from this chat → memory", run: (c) => memoryAdd(c) },
   { name: "settings", help: "Ollama server, default model, memory, tools", run: panel("settings") },
-  { name: "theme", args: "[name]", help: "Colours of AIhub's windows", run: panelOr("theme", (c, a) => soon(c, `/theme ${a}`)) },
+  { name: "theme", args: "[name]", help: "Colours: terminal (default), aihub, nord… → /theme nord", run: panelOr("theme", themeCommand) },
+  { name: "tools", help: "List the agent tools the engine has", run: (c) => toolsCommand(c) },
+  { name: "websearch", args: "[query]", help: "Try web search once", run: (c, arg) => websearchCommand(c, arg) },
   { name: "temp", args: "[value]", help: "Temperature → /temp 0.3 (or pick)", run: panelOr("temperature", (c, a) => temp(c, a)) },
   { name: "exit", help: "Leave aihub-code", run: (c) => c.exit() },
 ];

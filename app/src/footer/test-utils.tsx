@@ -13,6 +13,13 @@ import type { SlashCommand } from "./SlashSuggest";
 
 type ActFlag = { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
+/** Rendered first: React's act environment off from the first render (testRender
+ *  turns it on), so bridge answers landing in the first moments don't warn. */
+function ActOff() {
+  (globalThis as ActFlag).IS_REACT_ACT_ENVIRONMENT = false;
+  return null;
+}
+
 export const INFO = {
   session_id: "s1",
   project: { root: "/home/alex/proj", branch: "main", dirty_total: 0, instruction_file: null, is_git: true },
@@ -137,6 +144,7 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
     o.wrap ??
     ((f: ReactNode, b: MockBridge) => (
       <AppKeymapProvider>
+        <ActOff />
         <BridgeProvider client={adaptBridge(b)}>{f}</BridgeProvider>
       </AppKeymapProvider>
     ));

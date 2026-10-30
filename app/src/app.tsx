@@ -20,6 +20,7 @@ import { clampFooterHeight, debounced, exitLine, footerBudget, messagesToLines, 
 import { SchedulerHost } from "./panels/SchedulerHost";
 import { Transcript, rendererSink, type RendererSink } from "./scrollback";
 import { Controller, type Bridge } from "./session/controller";
+import { checkOllamaUpdate } from "./session/startup";
 
 /** The footer of an empty prompt: gap, box, status line. */
 export const IDLE_FOOTER_ROWS = 5;
@@ -221,7 +222,15 @@ export function launch(o: LaunchOptions): Launched {
       </BridgeProvider>
     </AppKeymapProvider>,
   );
-  // AIhub lists the skills at start for the prompt's `/skill <name>` suggestions.
-  void controller.start(o.args).then(() => Promise.all([controller.refreshSkills(), controller.refreshKb()]));
+  // AIhub lists the skills at start for the prompt's `/skill <name>` suggestions,
+  // and asks whether a newer Ollama is out (said as a note; no panel runs it here).
+  void controller.start(o.args).then(() => {
+    const up = !done && controller.getState().phase !== "error";
+    return Promise.all([
+      controller.refreshSkills(),
+      controller.refreshKb(),
+      up ? checkOllamaUpdate((m) => controller.request(m), (t) => controller.note(t)) : undefined,
+    ]);
+  });
   return { controller, sink, transcript, closed, shutdown };
 }

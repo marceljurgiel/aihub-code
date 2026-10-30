@@ -556,3 +556,65 @@ describe("hubDiff (what an AIhub turn's edit would change)", () => {
     expect(hubDiff("read_file", { path: "a" })).toBeNull();
   });
 });
+
+describe("the code session's resume id survives a fresh screen", () => {
+  const PREVIOUS = "Previous session: aihub-code --resume s1";
+  /** The lines written after the screen was cleared. */
+  const afterFresh = (m: Awaited<ReturnType<typeof started>>) => {
+    const marks: number[] = [];
+    (m.c as any).o.onFresh = () => marks.push(m.sink.lines.length);
+    return () => m.sink.lines.slice(marks.at(-1) ?? 0).join("\n");
+  };
+
+  test("/new under chat names the code session it left behind, under the fresh header", async () => {
+    const m = await started();
+    await m.codeTurn();
+    await m.c.setKind({ type: "chat" });
+    expect(m.count(RESUME)).toBe(1); // written when it went behind, on the screen /new is about to clear
+    const fresh = afterFresh(m);
+    await m.run("/new");
+    expect(fresh()).toContain(PREVIOUS);
+    expect(fresh().indexOf("chat")).toBeLessThan(fresh().indexOf("Previous session"));
+  });
+
+  test("/new under an agent does the same", async () => {
+    const m = await started();
+    await m.codeTurn();
+    await m.c.setKind({ type: "agent", name: "reviewer", submode: "build" });
+    const fresh = afterFresh(m);
+    await m.run("/new");
+    expect(fresh()).toContain(PREVIOUS);
+  });
+
+  test("/clear after code → chat → code: the line was printed before, on a screen /clear clears: it is printed again", async () => {
+    const m = await started();
+    await m.codeTurn();
+    await m.c.setKind({ type: "chat" });
+    await m.c.setKind({ type: "code" });
+    expect(m.c.getState().sessionId).toBe("s1"); // the same session came back
+    m.bridge.answers["code.start"] = { ...INFO, session_id: "s2" };
+    const fresh = afterFresh(m);
+    await m.run("/clear");
+    expect(fresh()).toContain(PREVIOUS);
+    expect(fresh().match(/--resume/g)).toHaveLength(1);
+    expect(m.c.resumableSessionId()).toBe(""); // the new session has had no turn
+  });
+
+  test("a code session nothing was said in has nothing to name", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    const fresh = afterFresh(m);
+    await m.run("/new");
+    expect(fresh()).not.toContain("Previous session");
+  });
+
+  test("every /new clears the screen, so each one names it again while the code session waits", async () => {
+    const m = await started();
+    await m.codeTurn();
+    await m.c.setKind({ type: "chat" });
+    await m.run("/new");
+    const fresh = afterFresh(m);
+    await m.run("/new");
+    expect(fresh()).toContain(PREVIOUS);
+  });
+});

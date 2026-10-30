@@ -408,3 +408,27 @@ describe("history from a resumed session", () => {
     expect(t.frame()).toContain("> first prompt");
   });
 });
+
+describe("the Ollama update check at start", () => {
+  test("a newer Ollama is said once in the transcript, with the command to run", async () => {
+    const t = await run({
+      width: 120,
+      answers: { "ollama.update_check": { newer: true, latest: "0.40.2", server: "0.30.7", how: "local", command: "curl -fsSL https://ollama.com/install.sh | sh" } },
+    });
+    await until(() => t.bridge.to("ollama.update_check").length > 0, t.settle);
+    const rows = (await t.scrolled()).join("\n");
+    expect(rows).toContain("Ollama 0.40.2 is out \u2014 this machine has 0.30.7. Update it: curl -fsSL https://ollama.com/install.sh | sh");
+    expect(t.bridge.to("ollama.update_check")).toHaveLength(1);
+  });
+
+  test("not newer, or a failed check: nothing is said", async () => {
+    const t = await run({ answers: { "ollama.update_check": { newer: false } } });
+    await until(() => t.bridge.to("ollama.update_check").length > 0, t.settle);
+    expect((await t.scrolled()).join("\n")).not.toContain("Ollama");
+  });
+
+  test("no check when the session never started", async () => {
+    const t = await run({ answers: { "code.start": new Error("boom") } });
+    expect(t.bridge.to("ollama.update_check")).toHaveLength(0);
+  });
+});

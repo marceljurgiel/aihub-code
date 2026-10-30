@@ -4,9 +4,6 @@
  * ChatScreen passes (ChatScreen.tsx 868–1195), from the controller's state
  * (`session`, see session-adapter.ts) and the controller's methods.
  *
- * Callbacks for what the controller can't do yet write a note,
- * "<action> — coming in this release" (`soon`); Tasks 4–10 replace them with
- * controller methods. The task report lists every one.
  */
 import type { ReactNode } from "react";
 import type { ActionId } from "../hub/keymap/actions.ts";
@@ -29,6 +26,7 @@ import {
 } from "../hub/modals/index.ts";
 import type { MissedTask } from "../hub/schedule/types.ts";
 import type { Controller, PanelId } from "../session/controller";
+import { ollamaChanged, saveTheme } from "../session/hubSettings";
 import type { SessionLike } from "./session-adapter";
 
 export interface PanelCtx {
@@ -40,9 +38,6 @@ export interface PanelCtx {
 }
 
 export type PanelFactory = (close: (result?: string) => void) => ReactNode;
-
-/** The stand-in for a controller method a later task adds. */
-const soon = (c: Controller, action: string) => c.note(`${action} — coming in this release`);
 
 /** The palette's AIhub actions, as aihub-code does them (hub/keymap/actions.ts
  *  lists only the ones it has). */
@@ -181,18 +176,19 @@ export function panelFactory(id: PanelId, ctx: PanelCtx): PanelFactory {
       return (close) => (
         <SettingsModal
           session={s}
-          // Memory / tools are saved by the window itself (config.set); the
-          // controller keeps no copy of them yet.
-          onPatchSession={() => {}}
+          // The window saves them (config.set); the controller keeps them in step.
+          onPatchSession={(patch) => c.patchSession(patch)}
           onEngineChanged={(change) => {
-            if (change.ollamaChanged) soon(c, "Checking the models on the new Ollama server");
+            if (change.ollamaChanged) void ollamaChanged(c);
           }}
+          // No /cd: the tools work in the folder aihub-code was started in.
+          fixedWorkdir={c.cwd()}
           onTemperature={(t) => void c.setTemperature(t)}
           onClose={() => close()}
         />
       );
     case "theme":
-      return (close) => <ThemeModal onSave={(name) => soon(c, `Saving the theme ${name}`)} onClose={() => close()} />;
+      return (close) => <ThemeModal onSave={(name, accent) => void saveTheme(c, name, accent)} onClose={() => close()} />;
     case "temperature":
       return (close) => (
         <TemperatureModal value={s.temperature} onSave={(t) => void c.setTemperature(t)} onClose={() => close()} />

@@ -20,6 +20,7 @@ import { useKeyboard } from "@opentui/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Controller } from "../session/controller";
 import { kindLabel } from "../session/kinds";
+import { allStatusItems } from "../session/status";
 import { useController } from "../session/useController";
 import { clipboardHasImage, looksLikeImagePaths } from "../hub/clipboard";
 import { sanitize } from "../width";
@@ -31,6 +32,7 @@ import { Picker, pickerInnerRows } from "./Picker";
 import { MAX_INPUT_ROWS, PromptBox } from "./PromptBox";
 import { SlashSuggest, MAX_SUGGESTIONS, slashMatches, type SlashCommand } from "./SlashSuggest";
 import { CHAT_HINTS, StatusLine, type StatusInput } from "./StatusLine";
+import { useLocation } from "./useLocation";
 
 export interface FooterProps {
   controller: Controller;
@@ -38,7 +40,7 @@ export interface FooterProps {
   width: number;
   /** The footer's height in rows whenever it changes. */
   onHeight?: (rows: number) => void;
-  /** A sent prompt (Enter). Task 7 routes /commands here; the default queues it. */
+  /** A sent prompt (Enter); the default hands it to the controller (/commands run, text queues or starts a turn). */
   onSubmit?: (text: string) => void;
   commands?: readonly SlashCommand[];
   /** The most rows the footer may take: a short terminal keeps room for the
@@ -384,14 +386,13 @@ export function Footer(props: FooterProps) {
   }, [height]);
 
   const hint = armed && prompting ? { text: "Press Ctrl+C again to exit", warn: true } : paneled ? { text: HINTS.panel } : asking ? { text: noting ? HINTS.note : HINTS.permission } : picking ? { text: HINTS.picker } : confirming ? { text: HINTS.confirm } : null;
+  const location = useLocation(controller);
   const status: StatusInput = {
     mode: kindLabel(st.kind, st.mode),
     // Shift+Tab does nothing in plain chat: no hint for it there.
     hints: st.kind.type === "chat" ? CHAT_HINTS : undefined,
-    model: sanitize(st.model),
-    ctx: st.ctx,
+    items: allStatusItems(st, location),
     queued: st.queue.length,
-    task: st.taskRunning,
     hint,
   };
 

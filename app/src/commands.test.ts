@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Args } from "./args";
 import { COMMANDS, SLASH_COMMANDS, commandTable } from "./commands";
+import { SLASH_COMMANDS as HUB_SLASH } from "./hub/slash";
 import { G } from "./glyphs";
 import { memorySink } from "./scrollback";
 import { Controller } from "./session/controller";
@@ -125,7 +126,7 @@ describe("routing", () => {
   test("the table: names from the spec, each with help, hints for the footer", () => {
     expect(COMMANDS.map((c) => c.name)).toEqual([
       "help", "mode", "plan", "model", "undo", "compact", "todos", "rules", "sessions", "resume", "clear", "new", "context",
-      "models", "hardware", "agent", "agents", "skills", "skill", "mcp", "kb", "knowledge", "schedule", "history", "memory", "memoryadd", "settings", "theme", "temp",
+      "models", "hardware", "agent", "agents", "skills", "skill", "mcp", "kb", "knowledge", "schedule", "history", "memory", "memoryadd", "settings", "theme", "tools", "websearch", "temp",
       "exit",
     ]);
     for (const c of COMMANDS) expect(c.help.length).toBeGreaterThan(5);
@@ -166,13 +167,34 @@ describe("AIhub's windows", () => {
     });
   }
 
-  test("a text form a later task brings says so and opens nothing", async () => {
+  test("/theme with a name changes it and opens no window (Task 10: panels/settings.test.tsx checks the rest)", async () => {
     const m = await started();
-    for (const cmd of ["/theme nord"]) {
-      const out = await m.run(cmd);
-      expect(out.join(" ")).toBe(`${cmd} — coming in this release`);
-      expect(m.c.getState().panel).toBeNull();
-    }
+    const out = await m.run("/theme nord");
+    expect(out.join(" ")).toContain("Theme \u2192 Nord");
+    expect(m.c.getState().panel).toBeNull();
+    await m.run("/theme terminal");
+  });
+
+  test("/tools prints the engine's tool list as notes", async () => {
+    const m = await started();
+    m.bridge.answers["tools.describe"] = { text: "read_file: read a file\nweb_search: search the web" };
+    expect(await m.run("/tools")).toEqual(["read_file: read a file", "web_search: search the web"]);
+    expect(m.bridge.to("tools.describe")).toHaveLength(1);
+    m.bridge.answers["tools.describe"] = { text: "" };
+    expect(await m.run("/tools")).toEqual(["(no tools)"]);
+    m.bridge.answers["tools.describe"] = new Error("engine said no");
+    expect((await m.run("/tools")).join(" ")).toContain("Listing tools failed: engine said no");
+  });
+
+  test("/websearch tries the engine's search once (search.check), with AIhub's words", async () => {
+    const m = await started();
+    m.bridge.answers["search.check"] = { ok: true, count: 5, source: "duckduckgo", first: { title: "Weather", url: "https://w.example/x" } };
+    const out = await m.run("/websearch rust news");
+    expect(m.bridge.to("search.check")[0]!.params).toEqual({ query: "rust news" });
+    expect(out[0]).toBe("Searching the web for \u201crust news\u201d\u2026");
+    expect(out.slice(1).join(" ")).toBe("Web search works \u2014 5 results via duckduckgo. First: Weather \u2014 https://w.example/x");
+    m.bridge.answers["search.check"] = { ok: false, failures: ["ddg: 429", "bing: timeout"] };
+    expect((await m.run("/websearch")).join("\n")).toContain("Web search failed: ddg: 429; bing: timeout");
   });
 
   test("while a turn runs a window is refused with the note", async () => {
@@ -982,5 +1004,20 @@ describe("holding the session still", () => {
     expect(await m.run("/resume s-gemma4:cloud")).toEqual(["that's the current session"]);
     expect(m.bridge.to("code.resume")).toEqual([]);
     expect(m.c.getState().phase).toBe("idle");
+  });
+});
+
+describe("AIhub's slash list (shown in its windows)", () => {
+  test("every command it lists is a command here", () => {
+    const table = commandTable();
+    for (const { cmd } of HUB_SLASH) expect(table[cmd.slice(1).split(" ")[0]!], cmd).toBeDefined();
+  });
+
+  test("/new, /clear and /history are described as aihub-code does them", () => {
+    const desc = (cmd: string) => HUB_SLASH.find((c) => c.cmd === cmd)!.desc;
+    expect(desc("/new")).toBe("New session on the same model and mode");
+    expect(desc("/clear")).toBe("New session on the same model and mode");
+    expect(desc("/history")).toContain("saved conversations");
+    expect(desc("/clear")).not.toContain("keep system");
   });
 });

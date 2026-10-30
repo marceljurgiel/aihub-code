@@ -7,9 +7,10 @@ export interface SlashCommand {
 /** Mirrors tui/widgets/slash_suggest.py COMMANDS.
  *  aihub-code: without /terminal and /cd (not in the line CLI) and without the
  *  F-key / ^G hints (aihub-code has no such keys; the windows open from these
- *  commands or the palette). */
+ *  commands or the palette). /new, /clear and /history say what they do here:
+ *  a new session (the old one stays resumable), and AIhub's saved chats. */
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { cmd: "/new", desc: "Start a fresh chat (same model)" },
+  { cmd: "/new", desc: "New session on the same model and mode" },
   { cmd: "/help", desc: "Show help & key bindings" },
   { cmd: "/model", desc: "Switch model" },
   { cmd: "/memory", desc: "Show saved memory" },
@@ -17,7 +18,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: "/memory clear", desc: "Delete all memory" },
   { cmd: "/memory undo", desc: "Undo what memory learned last" },
   { cmd: "/memoryadd", desc: "Auto-extract facts from this chat → memory" },
-  { cmd: "/history", desc: "Browse & resume past sessions" },
+  { cmd: "/history", desc: "AIhub's saved conversations: browse, continue in chat" },
   { cmd: "/agent", desc: "Pick or create an agent" },
   { cmd: "/skills", desc: "Browse, create & install skills" },
   { cmd: "/skill", desc: "Use a skill → /skill <name> <task>" },
@@ -27,7 +28,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: "/schedule", desc: "Scheduled tasks: agents on a timetable" },
   { cmd: "/schedule run", desc: "Run a scheduled task now → /schedule run <name>" },
   { cmd: "/tools", desc: "List available agentic tools" },
-  { cmd: "/clear", desc: "Clear chat context (keep system)" },
+  { cmd: "/clear", desc: "New session on the same model and mode" },
   { cmd: "/websearch", desc: "Test web search → /websearch <query>" },
   { cmd: "/temp", desc: "Temperature → /temp 0.3 (or pick)" },
 ];
