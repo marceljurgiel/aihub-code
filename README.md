@@ -11,7 +11,7 @@ the bottom is live: the activity line, the permission question, the prompt
 box and a status line.
 
 ```
- aihub-code 0.2.0 · gemma4:cloud · build · ~/my-project (main)
+ aihub-code 0.3.0 · gemma4:cloud · build · ~/my-project (main)
 
 > fix the failing test in calc.py
 ● read_file calc.py
@@ -30,13 +30,16 @@ Fixed: add() subtracted instead of adding.
 ```
 
 It is built on the engine of [AIhub](https://github.com/marceljurgiel/AIhub-TUI)
-(Ollama client, model catalogue, MCP connections, knowledge bases) and reads
-the same `~/.aihub` settings: the Ollama server, your models, MCP servers and
-per-model context sizes. Set those up once in AIhub; aihub-code uses them.
-aihub-code installs AIhub's released engine as a dependency and never
-modifies it.
+and brings all of AIhub into the CLI: models, agents, skills, memory,
+connections (MCP, Google), knowledge bases, scheduled tasks, images and
+history, each as a panel above the prompt. It reads and writes the same
+`~/.aihub` as AIhub: the Ollama server, your models, agents, memory, MCP
+servers, knowledge bases, scheduled tasks and per-model context sizes. The
+theme and accent are aihub-code's own (`~/.aihub/aihub-code-settings.json`),
+so changing them here does not change AIhub. aihub-code installs AIhub's
+released engine as a dependency and never modifies it.
 
-> **Status: early (0.2.0).** Developed and tried on Linux. The Windows and
+> **Status: early (0.3.0).** Developed and tried on Linux. The Windows and
 > macOS installers and the interactive UI have not been tried on a real
 > Windows or macOS machine yet. Expect rough edges, and small local models
 > sometimes ask instead of acting.
@@ -143,24 +146,72 @@ paths that turn changed and warns about files you changed since
 
 ### Slash commands
 
+Code and session:
+
 | Command | |
 |---|---|
-| `/help` | the commands and keys |
+| `/help [keys]` | the commands and keys |
 | `/mode [plan\|build\|auto]` | show or change the mode |
 | `/plan` | switch to plan mode |
-| `/model [name]` | choose a model (starts a new session) |
 | `/undo [force]` | undo the last turn's file changes |
 | `/compact` | summarize the conversation to free context |
 | `/todos` | show the model's todo list |
 | `/rules [remove N]` | list permission rules, or remove one |
 | `/sessions` | pick an earlier session of this folder |
 | `/resume [id]` | resume an earlier session |
-| `/clear` | new session on the same model and mode |
+| `/clear`, `/new` | new session on the same model and kind, from a fresh screen |
 | `/context` | how much of the context is used |
 | `/exit` | leave aihub-code |
-| `/hub` | where models, agents and connections live |
+
+AIhub, as panels above the prompt (Esc closes one):
+
+| Command | |
+|---|---|
+| `/model [name]` | switch to a model directly (starts a new session) |
+| `/models` | installed models, catalogue with hardware fit, downloads, context per model |
+| `/hardware` | what this machine and the Ollama server have |
+| `/agent [code\|chat\|name]` | choose what you talk to (see below) |
+| `/agents` | manage AIhub's agent profiles |
+| `/skills`, `/skill <name> [task]` | browse, create and install skills; use one |
+| `/memory [save\|clear\|undo]` | edit what AIhub remembers about you |
+| `/memoryadd` | extract facts from this chat into memory |
+| `/mcp` | connections: Google sign-in, GitHub and other services |
+| `/kb [name\|off]` | answer from a knowledge base in this chat; without a name, list them |
+| `/knowledge` | knowledge bases: build and search your own documents |
+| `/schedule [run <name>]` | scheduled tasks; run one now |
+| `/history` | AIhub's saved conversations |
+| `/settings` | Ollama server, default model, memory, tools |
+| `/theme [name]` | colours: `terminal` (default) uses your terminal's own, or `aihub`, `nord`, ... |
+| `/temp [value]` | temperature |
+| `/tools` | list the agent tools the engine has |
+| `/websearch [query]` | try web search once, as in AIhub 1.5.0 |
+
+Ctrl+P opens a palette of all commands.
 
 To send text that starts with `/`, start it with `//`.
+
+### `/agent`: what you talk to
+
+| Choice | |
+|---|---|
+| `code` (default) | the coding agent: files, shell, search, modes, approvals, `/undo`, code sessions |
+| `chat` | AIhub's plain chat, saved in AIhub's history |
+| a profile name | one of AIhub's agent profiles, with its own tools and permissions |
+
+`/agent` alone opens a picker. Switching starts a new conversation and prints
+the resume line of the old one. Shift+Tab cycles the modes under `code`, and
+build and plan under a profile that has them. In every kind you have memory
+(and it learns new facts after a reply), skills, knowledge bases (`/kb`), MCP
+connections (`/mcp`, switched on mid-session), temperature, the per-model
+context size and images: type or paste an image path to attach it to the next
+message. The status line shows the model and where it runs (GPU, CPU, cloud),
+the kind and mode, context used, `kb:<name>`, `mcp:on` and a running task.
+
+Scheduled tasks run in the background while aihub-code is open, and only
+then. The shortest interval is 5 minutes, as in AIhub. A task's result is
+printed into the scrollback. If a newer Ollama is out, a note at start says
+so and prints the update command; there is no update panel and no terminal
+panel, since you are already in a terminal.
 
 ### Keys
 
@@ -171,9 +222,10 @@ To send text that starts with `/`, start it with `//`.
 | Up / Down | earlier prompts |
 | Tab | complete a slash command |
 | Shift+Tab | cycle the mode |
-| Esc | interrupt a running turn; otherwise clear the prompt |
+| Esc | interrupt a running turn; otherwise clear the prompt; closes a panel |
 | Ctrl+C | interrupt; otherwise clear the prompt; press twice on an empty prompt to exit |
 | Ctrl+D | exit (on an empty prompt) |
+| Ctrl+P | palette of all commands |
 
 Shift+Enter needs a terminal that supports the kitty keyboard protocol
 (kitty, WezTerm, Ghostty, recent iTerm2 and others). In other terminals it
@@ -219,12 +271,15 @@ is read into the prompt.
 
 ## aihub-code and AIhub
 
-aihub-code is the coding tool; [AIhub](https://github.com/marceljurgiel/AIhub-TUI)
-is the hub. The model catalogue and downloads, agents, connections (MCP,
-Google) and knowledge bases live in `aihub`, which shares `~/.aihub` with
-aihub-code. Configure them there; `/hub` reminds you inside aihub-code.
-aihub-code does not need AIhub's app installed, only its engine, which the
-installer brings.
+aihub-code is a coding tool with the whole hub inside; [AIhub](https://github.com/marceljurgiel/AIhub-TUI)
+is the full-screen app. Both read and write the same `~/.aihub`, so models,
+agents, memory, connections, knowledge bases and scheduled tasks are shared:
+set one up in either. Only the theme and accent are separate. aihub-code does
+not need AIhub's app installed, only its engine, which the installer brings.
+
+A code session belongs to the folder it was started in (undo, rules and
+sessions are kept per folder), so there is no `/cd`: start aihub-code in the
+other folder instead.
 
 ## Develop
 

@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.3.0] - 2026-10-30
+
+All of AIhub in the CLI.
+
+### Added
+- AIhub's windows as panels above the prompt: `/models`, `/hardware`,
+  `/agents`, `/skills`, `/memory`, `/mcp`, `/knowledge`, `/schedule`,
+  `/history`, `/settings`, `/theme`, `/temp`. Esc closes a panel and the
+  conversation is shown again. Ctrl+P opens a palette of all commands.
+- `/agent [code|chat|name]`: talk to the code agent (default), to AIhub's
+  plain chat or to one of its agent profiles. Switching starts a new
+  conversation.
+- Memory that learns new facts after a reply, `/memoryadd`, skills
+  (`/skill <name> [task]`), knowledge bases (`/kb`) and MCP connections
+  switched on mid-session, in every kind.
+- Images: type or paste an image path to attach it.
+- Scheduled tasks run in the background; their results are printed into the
+  scrollback, and a missed run asks first.
+- A status line with the model and where it runs, the kind and mode, context
+  used, `kb:<name>`, `mcp:on` and a running task.
+- `/tools`, `/websearch` (AIhub's one-shot search check), `/temp`, and `/new`
+  as an alias of `/clear`.
+- A note at start when a newer Ollama is out.
+
+### Changed
+- `/clear` and `/new` start from a fresh screen; the old session's resume
+  command is shown as one dim line.
+- `/model` with no name opens the model panel.
+- Panels use the terminal's own colours by default. Theme and accent are
+  aihub-code's own (`~/.aihub/aihub-code-settings.json`); changing them does
+  not change AIhub. Everything else is shared with AIhub in `~/.aihub`.
+
+### Removed
+- `/hub`: the hub is now inside.
+
+### Notes
+- No `/cd`: a code session belongs to the folder it was started in. Start
+  aihub-code in another folder instead.
+- No Update-Ollama panel and no F8 terminal: the update command is printed,
+  and you are already in a terminal.
+- Scheduled tasks run only while aihub-code is open; the shortest interval
+  is 5 minutes, as in AIhub.
+- Tried on Linux only.
+
 ## [0.2.0] - 2026-10-26
 
 The interactive CLI: `aihub-code` in a project folder now opens a

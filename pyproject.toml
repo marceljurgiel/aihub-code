@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aihub-code"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Claude-Code-style coding CLI for local and cloud models, built on AIhub's engine"
 readme = "README.md"
 license = { file = "LICENSE" }

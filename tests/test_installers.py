@@ -247,4 +247,4 @@ def test_versions_agree():
     toml = re.search(r'^version\s*=\s*"([^"]+)"', _read("pyproject.toml"), re.M).group(1)
     init = re.search(r'__version__\s*=\s*"([^"]+)"', _read("aihub_code/__init__.py")).group(1)
     pkg = json.loads(_read("app/package.json"))["version"]
-    assert toml == init == pkg == "0.2.0"
+    assert toml == init == pkg == "0.3.0"

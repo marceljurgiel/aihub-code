@@ -102,7 +102,7 @@ describe("start-up", () => {
     };
     await c.start(ARGS);
     expect(sink.lines).toEqual([
-      ` aihub-code 0.2.0 ${G.sep} gemma4:cloud ${G.sep} build ${G.sep} ~/proj (main)`,
+      ` aihub-code 0.3.0 ${G.sep} gemma4:cloud ${G.sep} build ${G.sep} ~/proj (main)`,
       "AGENTS.md loaded",
       "no git here: undo keeps copies of the files",
     ]);

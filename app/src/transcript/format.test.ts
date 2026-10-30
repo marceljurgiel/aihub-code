@@ -326,12 +326,12 @@ describe("fmtError / fmtNote", () => {
 });
 
 describe("fmtHeader", () => {
-  const info = { version: "0.2.0", model: "gemma4:cloud", mode: "build", root: "/home/alex/my-project", branch: "main", home: "/home/alex" };
+  const info = { version: "0.3.0", model: "gemma4:cloud", mode: "build", root: "/home/alex/my-project", branch: "main", home: "/home/alex" };
   test("the approved header line", () => {
-    expect(t(fmtHeader(info, 100))).toEqual([" aihub-code 0.2.0 · gemma4:cloud · build · ~/my-project (main)"]);
+    expect(t(fmtHeader(info, 100))).toEqual([" aihub-code 0.3.0 · gemma4:cloud · build · ~/my-project (main)"]);
   });
   test("no branch, no parentheses; outside the home the path stays absolute", () => {
-    expect(t(fmtHeader({ ...info, branch: null }, 100))).toEqual([" aihub-code 0.2.0 · gemma4:cloud · build · ~/my-project"]);
+    expect(t(fmtHeader({ ...info, branch: null }, 100))).toEqual([" aihub-code 0.3.0 · gemma4:cloud · build · ~/my-project"]);
     expect(t(fmtHeader({ ...info, root: "/srv/app", branch: null }, 100))[0]!.endsWith("· /srv/app")).toBe(true);
     expect(t(fmtHeader({ ...info, root: "/home/alex", branch: null }, 100))[0]!.endsWith("· ~")).toBe(true);
   });
@@ -344,7 +344,7 @@ describe("fmtHeader", () => {
       expect(lines).toHaveLength(1);
       expect(lineWidth(lines[0]!)).toBeLessThanOrEqual(w);
     }
-    expect(t(fmtHeader(info, 60))[0]!.startsWith(" aihub-code 0.2.0 · gemma4:cloud · build · ")).toBe(true);
+    expect(t(fmtHeader(info, 60))[0]!.startsWith(" aihub-code 0.3.0 · gemma4:cloud · build · ")).toBe(true);
     expect(t(fmtHeader(info, 60))[0]).toContain("…");
   });
   test("the name is bold accent, the rest dim", () => {
