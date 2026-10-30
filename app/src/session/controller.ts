@@ -335,6 +335,8 @@ export class Controller {
   private task: TaskBlock | null = null;
   private taskWaitNoted = false;
   private missedAnswer: ((choice: "run" | "skip") => void) | null = null;
+  // /memoryadd's memory.extract requests on the wire (the model is in use).
+  private extracting = 0;
 
   constructor(private readonly o: ControllerOptions) {
     // A bridge that dies between turns is said at once, not at the next Enter.
@@ -1086,10 +1088,22 @@ export class Controller {
     return this.scheduler;
   }
 
-  /** The model is in use: a turn (or a /skill about to send one), or memory
-   *  learning. A scheduled task waits. */
+  /** The model is in use: a turn (or a /skill about to send one), memory
+   *  learning, or /memoryadd's extract. A scheduled task waits. */
   isBusy(): boolean {
-    return this.turn !== null || this.invoking || this.learner.learning;
+    return this.turn !== null || this.invoking || this.learner.learning || this.extracting > 0;
+  }
+
+  /** `/memoryadd`'s request: it asks the model, so a scheduled task waits for
+   *  it and may start once it has settled. */
+  async extractMemory<T = any>(params: Record<string, unknown>): Promise<T> {
+    this.extracting++;
+    try {
+      return await this.o.bridge.request<T>("memory.extract", params);
+    } finally {
+      this.extracting--;
+      this.set({});
+    }
   }
 
   /** Run a task now (the Schedule window, /schedule run): after what runs. */

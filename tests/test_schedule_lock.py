@@ -48,11 +48,17 @@ class Bridge:
         self.p = subprocess.Popen([sys.executable, "-c", BOOT], cwd=cwd, env=env, text=True,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL)
+        assert self.p.stdin and self.p.stdout
         self.lines: "queue.Queue[dict]" = queue.Queue()
         threading.Thread(target=self._read, daemon=True).start()
-        self.ready = self.next(lambda m: m.get("event") == "ready")
+        try:
+            self.ready = self.next(lambda m: m.get("event") == "ready")
+        except BaseException:
+            self.close()
+            raise
 
     def _read(self) -> None:
+        assert self.p.stdout
         for line in self.p.stdout:
             line = line.strip()
             if line:
@@ -66,6 +72,7 @@ class Bridge:
                 return m
 
     def send(self, req_id: int, method: str, params: dict) -> None:
+        assert self.p.stdin
         self.p.stdin.write(json.dumps({"id": req_id, "method": method, "params": params}) + "\n")
         self.p.stdin.flush()
 
@@ -88,7 +95,8 @@ class Bridge:
 
     def close(self) -> None:
         try:
-            self.p.stdin.close()
+            if self.p.stdin:
+                self.p.stdin.close()
             self.p.wait(timeout=10)
         except Exception:
             self.p.kill()
@@ -100,8 +108,12 @@ def test_two_windows_run_a_due_task_once(tmp_path):
     proj.mkdir()
     # Nothing listens here: no request may reach a real Ollama.
     (home / ".aihub" / "config.yaml").write_text("ollama_api_url: http://127.0.0.1:9\n")
-    a, b = Bridge(str(home), str(proj)), Bridge(str(home), str(proj))
+    started: list = []
     try:
+        # Inside the try: if the second fails to start, the first is closed too.
+        started.append(Bridge(str(home), str(proj)))
+        started.append(Bridge(str(home), str(proj)))
+        a, b = started
         created = (datetime.now() - timedelta(hours=1)).replace(microsecond=0).isoformat()
         a.call(1, "schedule.save", {"task": {
             "name": "daily", "agent": "writer", "model": "tiny:latest", "backend": "ollama",
@@ -117,8 +129,8 @@ def test_two_windows_run_a_due_task_once(tmp_path):
         assert time.monotonic() - t0 < 1.0
         ra, rb = a.run(10), b.run(10)
     finally:
-        a.close()
-        b.close()
+        for br in started:
+            br.close()
 
     results = sorted([ra, rb], key=lambda r: r["end"].get("data", {}).get("status", ""))
     ran, skipped = results[0], results[1]

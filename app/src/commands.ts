@@ -168,7 +168,7 @@ async function memoryAdd(c: Controller): Promise<void> {
   if (task) return c.note(`Task ${task} is using the model \u2014 try again when it is done.`);
   if (!model) return c.error("No model selected.");
   c.note("Extracting facts from this chat…");
-  await c.request<{ ok?: boolean; summary?: string }>("memory.extract", { model, messages: c.conversationMessages() }).then((d) => {
+  await c.extractMemory<{ ok?: boolean; summary?: string }>({ model, messages: c.conversationMessages() }).then((d) => {
     if (d?.ok) c.note("Memory updated with extracted facts.");
     else c.error(String(d?.summary ?? "Extracting memory failed."));
   }, failed(c, "Extracting memory"));

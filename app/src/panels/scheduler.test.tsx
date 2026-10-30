@@ -200,6 +200,23 @@ describe("scheduled tasks in the background", () => {
     await until(() => t.bridge.runs().length === 1, t.settle);
   });
 
+  test("a task waits while /memoryadd's memory.extract has the model", async () => {
+    let release: (v: unknown) => void = () => {};
+    const t = await run({ answers: { "memory.extract": () => new Promise((r) => (release = r)) } });
+    await t.submit("I work in Rust");
+    t.bridge.turns()[0]!.finish({ messages: [{ role: "user", content: "I work in Rust" }, { role: "assistant", content: "Noted." }] });
+    await t.settle();
+    await t.submit("/memoryadd");
+    await until(() => t.bridge.count("memory.extract") === 1, t.settle);
+    t.bridge.due = [{ name: "daily", slot: SLOT }];
+    const checks = t.bridge.count("schedule.check");
+    await until(() => t.bridge.count("schedule.check") >= checks + 3, t.settle);
+    expect(t.bridge.runs()).toHaveLength(0); // the extract has the model
+    release({ ok: true });
+    await until(() => t.bridge.runs().length === 1, t.settle);
+    expect(t.text().join("\n")).toContain("Memory updated with extracted facts.");
+  });
+
   test("/schedule run <name> runs it now; an unknown name says so", async () => {
     const t = await run();
     await t.submit("/schedule run mail-digest");
