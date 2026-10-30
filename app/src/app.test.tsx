@@ -153,6 +153,73 @@ describe("the app on a split-footer renderer", () => {
     expect(rows.indexOf(rows.find((r) => r.includes("aihub-code"))!)).toBeLessThan(rows.findIndex((r) => r.includes("> a long")));
   });
 
+  describe("/new and /clear start from a fresh screen", () => {
+    const turn = async (t: Awaited<ReturnType<typeof run>>, prompt: string, reply: string) => {
+      await t.setup.mockInput.typeText(prompt);
+      t.setup.mockInput.pressEnter();
+      await t.settle();
+      t.bridge.lastStream.emit("text", { text: `${reply}\n` });
+      t.bridge.lastStream.finish({ messages: [{ role: "system", content: "s" }, { role: "user", content: prompt }, { role: "assistant", content: reply }] });
+      await t.settle();
+    };
+    const command = async (t: Awaited<ReturnType<typeof run>>, cmd: string) => {
+      await t.setup.mockInput.typeText(cmd);
+      t.setup.mockInput.pressEnter();
+      await t.settle();
+      await sleep(40);
+      await t.settle();
+    };
+
+    for (const cmd of ["/new", "/clear"]) {
+      test(`${cmd} in code: the screen and saved lines are cleared, the transcript is the header and the previous-session line`, async () => {
+        const t = await run({ width: 70 });
+        await turn(t, "fix the bug", "OLDREPLY done");
+        await t.scrolled();
+        t.bridge.answers["code.start"] = { ...INFO, session_id: "s2" };
+        await command(t, cmd);
+        expect(t.resets).toContainEqual({ clearSavedLines: true });
+        const text = t.app.transcript.all().map((l) => l.map((s) => s.text).join("")).join("\n");
+        expect(text).not.toContain("fix the bug");
+        expect(text).not.toContain("OLDREPLY");
+        expect(text).toContain("aihub-code");
+        expect(text.match(/Previous session: aihub-code --resume s1/g)).toHaveLength(1);
+        expect(text.indexOf("aihub-code")).toBeLessThan(text.indexOf("Previous session"));
+        const seen = (await t.scrolled()).join("\n");
+        expect(seen).not.toContain("OLDREPLY");
+        // A later resize writes the fresh view only.
+        t.resets.length = 0;
+        t.setup.resize(60, 20);
+        t.setup.resize(61, 20);
+        await until(() => t.resets.length > 0, t.settle);
+        const after = (await t.scrolled()).join("\n");
+        expect(after).toContain("Previous session: aihub-code --resume s1");
+        expect(after).not.toContain("OLDREPLY");
+        expect(after).not.toContain("fix the bug");
+      });
+    }
+
+    test("/new under chat: the old chat leaves the screen and a resize does not bring it back", async () => {
+      const t = await run({ width: 70, answers: { "chat.start": { messages: [{ role: "system", content: "s" }] }, "hardware.recommend_context": { context: 8192 } } });
+      await command(t, "/agent chat");
+      await turn(t, "hello there", "OLDCHAT reply");
+      await t.scrolled();
+      await command(t, "/new");
+      expect(t.resets).toContainEqual({ clearSavedLines: true });
+      const text = t.app.transcript.all().map((l) => l.map((s) => s.text).join("")).join("\n");
+      expect(text).not.toContain("hello there");
+      expect(text).not.toContain("OLDCHAT");
+      expect(text).toContain("chat");
+      expect(text).not.toContain("Previous session");
+      t.resets.length = 0;
+      t.setup.resize(60, 20);
+      t.setup.resize(61, 20);
+      await until(() => t.resets.length > 0, t.settle);
+      const after = (await t.scrolled()).join("\n");
+      expect(after).not.toContain("OLDCHAT");
+      expect(after).not.toContain("hello there");
+    });
+  });
+
   test("/memory: AIhub's window fills all rows but one; closing it writes the transcript again once", async () => {
     const t = await run({ width: 60, height: 20, answers: { "memory.load": { content: "## Editor\nAlex uses Helix.\n" } } });
     await t.scrolled();

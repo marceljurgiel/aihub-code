@@ -155,6 +155,12 @@ export function launch(o: LaunchOptions): Launched {
       sink.write(messagesToLines(messages, renderer.width));
       prompts.set(userPrompts(messages));
     },
+    onFresh: () => {
+      // /new: the old conversation leaves the screen, the saved lines and the
+      // transcript, so no later replay brings it back.
+      transcript.clear();
+      sink.replay({ clearSavedLines: true });
+    },
     onExit: () => shutdown(),
   });
 

@@ -189,6 +189,9 @@ export interface ControllerOptions {
   onExit?: () => void;
   /** A resumed session's saved messages, for the app to replay into the scrollback. */
   onResume?: (messages: any[]) => void;
+  /** /new or /clear: the app clears the screen, its saved lines and its
+   *  transcript; the fresh view (header, notes) is written right after. */
+  onFresh?: () => void;
   /** How long exit() waits for an interrupted turn to end (the engine saves
    *  the session at the turn's end) before it goes anyway. */
   exitGraceMs?: number;
@@ -207,7 +210,10 @@ interface BeginOptions {
   backend?: Backend;
   streamModel?: string;
   /** Write a divider instead of the header: the conversation continues below. */
-  divider?: "clear" | "model";
+  divider?: "model";
+  /** /new, /clear: the screen starts over with the header; the code session
+   *  left behind is named in a line under it. */
+  fresh?: { previous?: string };
 }
 
 const MODES: Mode[] = ["build", "auto", "plan"];
@@ -540,6 +546,7 @@ export class Controller {
     const mode = MODES.includes(info.mode) ? (info.mode as Mode) : "build";
     this.modeConfirmed = mode;
     this.dropImages(); // a new conversation starts without the old one's pending images
+    if (opts.fresh) this.o.onFresh?.();
     if (opts.divider) {
       this.write(fmtDivider(opts.divider === "model" ? `new session with ${model}` : "new session", this.o.width()));
     } else {
@@ -551,6 +558,10 @@ export class Controller {
       );
       if (project.instruction_file) this.note(`${project.instruction_file} loaded`);
       if (project.is_git === false) this.note("not a git repository");
+    }
+    if (opts.fresh?.previous) {
+      this.resumeLineShown.add(opts.fresh.previous);
+      this.note(`Previous session: aihub-code --resume ${opts.fresh.previous}`);
     }
     this.checkpointNote(info.checkpoints?.note);
     this.codeOpts = {
@@ -1169,10 +1180,10 @@ export class Controller {
     if (!this.requireSession() || !this.canSwitch()) return;
     const k = this.state.kind;
     if (k.type !== "code") {
-      await this.switchWith(() => this.openHub(k, this.current(), { divider: "new chat" }));
+      await this.switchWith(() => this.openHub(k, this.current(), { fresh: true }));
       return;
     }
-    await this.replaceSession(() => this.startSession(this.state.model, false, { mode: this.state.mode, divider: "clear" }));
+    await this.replaceSession(() => this.startSession(this.state.model, false, { mode: this.state.mode, fresh: { previous: this.resumableSessionId() } }));
   }
 
   /** `/model [name]`: a new session on another model (the old one stays
@@ -1675,7 +1686,7 @@ export class Controller {
   private async openHub(
     k: HubKind,
     m: { model: string; backend: Backend; streamModel: string },
-    o: { check?: AgentCheck; divider?: string } = {},
+    o: { check?: AgentCheck; fresh?: boolean } = {},
   ): Promise<void> {
     const hub = new HubChat(this.o.bridge, m);
     await hub.start();
@@ -1688,7 +1699,8 @@ export class Controller {
     this.hub = hub;
     // A new chat starts with no knowledge bases (AIhub's new chat does).
     this.set({ kind: k, model: m.model, backend: m.backend, streamModel: m.streamModel, ctx: { used: 0, limit }, knowledge: [] });
-    this.write(fmtDivider(o.divider ?? kindHeader(k, this.state.mode, m.model), this.o.width()));
+    if (o.fresh) this.o.onFresh?.();
+    this.write(fmtDivider(kindHeader(k, this.state.mode, m.model), this.o.width()));
     // On entering an agent (not on /clear under it): what it can do.
     if (k.type === "agent" && o.check) this.note(agentNote(o.check.agent ?? { name: k.name }, k.submode, o.check, m.model, limit));
   }

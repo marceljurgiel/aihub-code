@@ -797,19 +797,19 @@ describe("after a failed start (the prompt stays usable for /model and /sessions
 });
 
 describe("/clear", () => {
-  test("a new session with the same model and mode, and a dim divider in the transcript", async () => {
+  test("a new session with the same model and mode; the screen starts over with the header", async () => {
     const m = await started();
     await m.run("/mode auto");
     m.bridge.answers["code.start"] = (p: Record<string, unknown>) => ({ ...INFO, model: p.model, mode: p.mode, session_id: "s2" });
+    const fresh: number[] = [];
+    (m.c as any).o.onFresh = () => fresh.push(m.sink.lines.length);
     const out = await m.run("/clear");
     expect(m.bridge.to("code.start").at(-1)!.params).toEqual({ cwd: "/home/alex/proj", model: "gemma4:cloud", mode: "auto", mcp: [], knowledge: [] });
-    expect(out).toHaveLength(1);
-    expect(out[0]).toContain("new session");
-    expect(out[0]!.startsWith(G.h)).toBe(true);
-    expect(out[0]!.length).toBeLessThanOrEqual(80);
+    expect(fresh).toHaveLength(1);
+    expect(out.join("\n")).toContain("aihub-code");
+    expect(out.join("\n")).not.toContain("new session");
+    expect(out.join("\n")).not.toContain("Previous session"); // nothing was said in the old one
     expect(m.c.getState()).toMatchObject({ phase: "idle", sessionId: "s2", model: "gemma4:cloud", mode: "auto", ctx: { used: 0, limit: 8192 }, todos: [] });
-    const span = m.sink.styled.at(-1)!;
-    expect(span.every((s) => s.dim)).toBe(true);
   });
 
   test("keeps the MCP and knowledge choices of this run", async () => {
@@ -851,7 +851,10 @@ describe("/clear", () => {
     m.bridge.answers["code.start"] = { ...INFO, session_id: "s2" };
     await m.run("/clear");
     m.c.exit();
-    expect(m.sink.lines.join("\n")).not.toContain("--resume");
+    // The old session is named once, under the fresh header; the new one has nothing to resume.
+    expect(m.sink.lines.join("\n").match(/--resume/g)).toHaveLength(1);
+    expect(m.sink.lines.join("\n")).toContain("Previous session: aihub-code --resume s-gemma4:cloud");
+    expect(m.c.resumableSessionId()).toBe("");
   });
 });
 

@@ -46,6 +46,11 @@ export class Transcript {
     if (this.lines.length > this.maxLines) this.lines.splice(0, this.lines.length - this.maxLines);
   }
 
+  /** A new conversation: what was written is not written again. */
+  clear(): void {
+    this.lines = [];
+  }
+
   all(): Line[] {
     return [...this.lines];
   }
