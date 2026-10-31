@@ -1176,11 +1176,15 @@ export class Controller {
   }
 
   /** `/memoryadd`'s request: it asks the model, so the queue, a learn and a
-   *  scheduled task wait for it, and go once it has settled. */
-  async extractMemory<T = any>(params: Record<string, unknown>): Promise<T> {
+   *  scheduled task wait for it, and go once it has settled — after its
+   *  result is said (`report`), so the lines come in that order. */
+  async extractMemory<T = any>(params: Record<string, unknown>, report: { ok(d: T): void; fail(e: unknown): void }): Promise<void> {
     this.extracting++;
     try {
-      return await this.o.bridge.request<T>("memory.extract", params);
+      const d = await this.o.bridge.request<T>("memory.extract", params);
+      report.ok(d);
+    } catch (e) {
+      report.fail(e);
     } finally {
       this.extracting--;
       this.modelFreed();

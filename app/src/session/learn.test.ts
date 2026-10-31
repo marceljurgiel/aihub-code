@@ -518,6 +518,11 @@ describe("one model request at a time across memory features (I1)", () => {
     await settle();
     expect(m.bridge.to("code.turn")).toHaveLength(2);
     expect(m.bridge.lastStream.params.text).toBe("next one");
+    // The extract's result is said before the prompt that waited for it.
+    const said = m.sink.lines.findIndex((l) => l.includes("Memory updated with extracted facts."));
+    const echo = m.sink.lines.findIndex((l) => l.includes("next one"));
+    expect(said).toBeGreaterThan(-1);
+    expect(said).toBeLessThan(echo);
   });
 
   test("/compact during a learn is refused", async () => {

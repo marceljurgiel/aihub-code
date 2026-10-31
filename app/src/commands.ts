@@ -168,10 +168,13 @@ async function memoryAdd(c: Controller): Promise<void> {
   const messages = c.conversationMessages();
   if (!messages.some((m) => (m as { role?: unknown } | null)?.role === "user")) return c.note("Nothing to learn from yet.");
   c.note("Extracting facts from this chat…");
-  await c.extractMemory<{ ok?: boolean; summary?: string }>({ model, messages }).then((d) => {
-    if (d?.ok) c.note("Memory updated with extracted facts.");
-    else c.error(String(d?.summary ?? "Extracting memory failed."));
-  }, failed(c, "Extracting memory"));
+  await c.extractMemory<{ ok?: boolean; summary?: string }>({ model, messages }, {
+    ok: (d) => {
+      if (d?.ok) c.note("Memory updated with extracted facts.");
+      else c.error(String(d?.summary ?? "Extracting memory failed."));
+    },
+    fail: failed(c, "Extracting memory"),
+  });
 }
 
 // ── /schedule ─────────────────────────────────────────────────────────────────
