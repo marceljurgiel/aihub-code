@@ -17,10 +17,12 @@
  *    that still arrives is denied at once, so the engine never waits for it);
  *  - when the bridge dies the phase becomes "error" with the client's message
  *    printed red; the queue is kept and the input stays usable;
- *  - one model request at a time: a scheduled task (SchedulerHost runs AIhub's
- *    clock) never starts while `isBusy()`, and a prompt waits for a running
- *    task (`taskRunning`) in the queue; the task's output is a block in the
- *    transcript (TaskBlock).
+ *  - one model request at a time, behind one gate (`isBusy()`: a turn, a
+ *    /skill being fetched, a memory learn, /memoryadd's extract, a scheduled
+ *    task): a scheduled task (SchedulerHost runs AIhub's clock) and a learn
+ *    never start while it holds, a typed prompt waits in the queue (with one
+ *    note per wait), and /compact, /skill and /memoryadd refuse; the task's
+ *    output is a block in the transcript (TaskBlock).
  */
 import type { StreamHandle } from "../bridge/client";
 import type { Args, Mode } from "../args";
@@ -342,14 +344,16 @@ export class Controller {
   private missedAnswer: ((choice: "run" | "skip") => void) | null = null;
   // /memoryadd's memory.extract requests on the wire (the model is in use).
   private extracting = 0;
+  // The queue's "waiting for memory" note was said for this wait.
+  private memoryWaitNoted = false;
 
   constructor(private readonly o: ControllerOptions) {
     // A bridge that dies between turns is said at once, not at the next Enter.
     o.bridge.onDead?.((err) => this.bridgeDied(err));
     this.learner = new Learner(o.bridge, undefined, {
-      isBusy: () => this.turn !== null || this.state.taskRunning !== null,
-      // A task that waited for the learn may start now.
-      onSettled: () => this.set({}),
+      isBusy: () => this.isBusy(),
+      // A prompt (or a task) that waited for the learn may go now.
+      onSettled: () => this.modelFreed(),
       onChanges: (changes) => {
         if (!this.exited) for (const c of changes) this.write(fmtMemoryChange(c, this.o.width()));
       },
@@ -707,6 +711,13 @@ export class Controller {
       this.taskWaitNoted = true;
       return;
     }
+    // Memory (a learn, /memoryadd) has the model: right after it (modelFreed).
+    if (this.memoryBusy()) {
+      if (!this.memoryWaitNoted) this.note("Waiting for memory\u2026 your message goes right after.");
+      this.memoryWaitNoted = true;
+      return;
+    }
+    this.memoryWaitNoted = false;
     const images = this.queuedImages.shift() ?? [];
     this.set({ queue: rest });
     this.sendTurn(next, undefined, images);
@@ -1098,21 +1109,54 @@ export class Controller {
     return this.scheduler;
   }
 
-  /** The model is in use: a turn (or a /skill about to send one), memory
-   *  learning, or /memoryadd's extract. A scheduled task waits. */
+  /** The one gate of "one model request at a time": a turn (or a /skill
+   *  about to send one), memory learning, /memoryadd's extract, or a
+   *  scheduled task. A scheduled task and a learn wait while it holds; typed
+   *  prompts wait in the queue; /compact, /skill and /memoryadd refuse. */
   isBusy(): boolean {
-    return this.turn !== null || this.invoking || this.learner.learning || this.extracting > 0;
+    return this.turn !== null || this.invoking || this.memoryBusy() || this.state.taskRunning !== null;
   }
 
-  /** `/memoryadd`'s request: it asks the model, so a scheduled task waits for
-   *  it and may start once it has settled. */
+  /** Memory asks the model: a learn, or /memoryadd's extract. */
+  private memoryBusy(): boolean {
+    return this.learner.learning || this.extracting > 0;
+  }
+
+  /** A memory request ended: a prompt that waited goes out, and the clock
+   *  (which listens to state changes) may start a task. */
+  private modelFreed(): void {
+    this.drainQueue();
+    this.set({});
+  }
+
+  /** For what asks the model itself (/compact, /skill, /memoryadd): false,
+   *  with a note, while something else has it. */
+  modelFree(): boolean {
+    const { phase, taskRunning } = this.state;
+    if (this.turn || this.invoking || phase === "running" || phase === "permission") {
+      this.note("Finish or interrupt the current turn first (Esc).");
+      return false;
+    }
+    if (taskRunning) {
+      this.note(`Task ${taskRunning} is using the model \u2014 try again when it is done.`);
+      return false;
+    }
+    if (this.memoryBusy()) {
+      this.note("Memory is using the model \u2014 try again when it is done.");
+      return false;
+    }
+    return true;
+  }
+
+  /** `/memoryadd`'s request: it asks the model, so the queue, a learn and a
+   *  scheduled task wait for it, and go once it has settled. */
   async extractMemory<T = any>(params: Record<string, unknown>): Promise<T> {
     this.extracting++;
     try {
       return await this.o.bridge.request<T>("memory.extract", params);
     } finally {
       this.extracting--;
-      this.set({});
+      this.modelFreed();
     }
   }
 
@@ -1194,13 +1238,6 @@ export class Controller {
     const answer = this.missedAnswer;
     this.missedAnswer = null;
     answer?.(choice);
-  }
-
-  /** Something else wants the model: not while a task has it. */
-  private taskHasModel(): boolean {
-    const task = this.state.taskRunning;
-    if (task) this.note(`Task ${task} is using the model \u2014 try again when it is done.`);
-    return task !== null;
   }
 
   // ── commands, exit ─────────────────────────────────────────────────────────
@@ -1290,7 +1327,7 @@ export class Controller {
 
   /** `/compact`. */
   compact(): void {
-    if (!this.requireSession() || !this.requireCode("compact") || !this.canSwitch() || this.taskHasModel()) return;
+    if (!this.requireSession() || !this.requireCode("compact") || !this.canSwitch() || !this.modelFree()) return;
     this.startStream("code.compact", {}, "compacting\u2026");
   }
 
@@ -1523,7 +1560,7 @@ export class Controller {
    *  to the context in use) go to the model as the prompt; the transcript
    *  keeps what was typed (the command's echo). Between turns only. */
   async useSkill(name: string, task: string): Promise<void> {
-    if (!this.requireSession() || !this.canSwitch() || this.taskHasModel()) return;
+    if (!this.requireSession() || !this.canSwitch() || !this.modelFree()) return;
     this.invoking = true;
     let content: string;
     try {

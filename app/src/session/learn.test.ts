@@ -459,6 +459,16 @@ describe("memory commands", () => {
     expect(m.text()).toContain("Finish or interrupt the current turn first (Esc).");
   });
 
+  test("/memoryadd with no user message yet says so and sends nothing", async () => {
+    const m = await started();
+    await m.run("/memoryadd");
+    await m.c.setKind({ type: "chat" });
+    await m.run("/memoryadd");
+    expect(m.bridge.to("memory.extract")).toHaveLength(0);
+    expect(m.sink.lines.filter((l) => l.includes("Nothing to learn from yet."))).toHaveLength(2);
+    expect(m.text()).not.toContain("Extracting facts");
+  });
+
   test("/memory clear, /memory save, wrong forms", async () => {
     const m = await started();
     await m.run("/memory clear");
@@ -479,5 +489,91 @@ describe("memory commands", () => {
     m.bridge.answers["memory.undo"] = new Error("disk full");
     await m.run("/memory undo");
     expect(m.text()).toContain("Undoing memory failed: disk full");
+  });
+});
+
+describe("one model request at a time across memory features (I1)", () => {
+  const WAITING = "Waiting for memory… your message goes right after.";
+  const BUSY = "Memory is using the model — try again when it is done.";
+  /** A started session with one finished code turn, and memory.extract held back. */
+  async function withHeldExtract() {
+    const m = await started();
+    let release!: (v: unknown) => void;
+    m.bridge.answers["memory.extract"] = () => new Promise((r) => (release = r));
+    await m.run("I work in Rust");
+    m.bridge.lastStream.finish(codeDone("I work in Rust"));
+    await settle();
+    return { ...m, release: (v: unknown) => release(v) };
+  }
+
+  test("a prompt typed during /memoryadd's extract waits (one note), then goes out after it", async () => {
+    const m = await withHeldExtract();
+    await m.run("/memoryadd");
+    expect(m.bridge.to("memory.extract")).toHaveLength(1);
+    await m.run("next one");
+    await m.run("and another");
+    expect(m.bridge.to("code.turn")).toHaveLength(1);
+    expect(m.sink.lines.filter((l) => l.includes(WAITING))).toHaveLength(1);
+    m.release({ ok: true });
+    await settle();
+    expect(m.bridge.to("code.turn")).toHaveLength(2);
+    expect(m.bridge.lastStream.params.text).toBe("next one");
+  });
+
+  test("/compact during a learn is refused", async () => {
+    const m = await started();
+    let release!: (v: unknown) => void;
+    m.bridge.answers["memory.learn"] = () => new Promise((r) => (release = r));
+    await m.run("I work in Rust");
+    m.bridge.lastStream.finish(codeDone("I work in Rust"));
+    await until(() => m.learns().length === 1);
+    await m.run("/compact");
+    expect(m.bridge.to("code.compact")).toHaveLength(0);
+    expect(m.text()).toContain(BUSY);
+    release({ changes: [], cursor: 1 });
+    await settle();
+  });
+
+  test("/skill during a learn is refused", async () => {
+    const m = await started();
+    let release!: (v: unknown) => void;
+    m.bridge.answers["memory.learn"] = () => new Promise((r) => (release = r));
+    await m.run("I work in Rust");
+    m.bridge.lastStream.finish(codeDone("I work in Rust"));
+    await until(() => m.learns().length === 1);
+    await m.run("/skill commit");
+    expect(m.bridge.to("skills.invoke")).toHaveLength(0);
+    expect(m.text()).toContain(BUSY);
+    release({ changes: [], cursor: 1 });
+    await settle();
+  });
+
+  test("a second /memoryadd during an extract is refused", async () => {
+    const m = await withHeldExtract();
+    await m.run("/memoryadd");
+    await m.run("/memoryadd");
+    expect(m.bridge.to("memory.extract")).toHaveLength(1);
+    expect(m.text()).toContain(BUSY);
+    m.release({ ok: true });
+    await settle();
+  });
+
+  test("a learn does not start while an extract runs; it goes after", async () => {
+    const m = await withHeldExtract();
+    await m.run("/memoryadd");
+    await sleep(IDLE * 3);
+    expect(m.learns()).toHaveLength(0);
+    m.release({ ok: true });
+    await until(() => m.learns().length === 1);
+  });
+
+  test("isBusy() is the same gate: true during an extract and a learn", async () => {
+    const m = await withHeldExtract();
+    expect(m.c.isBusy()).toBe(false);
+    await m.run("/memoryadd");
+    expect(m.c.isBusy()).toBe(true);
+    m.release({ ok: true });
+    await settle();
+    expect(m.c.isBusy()).toBe(false);
   });
 });

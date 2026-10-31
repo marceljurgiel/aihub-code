@@ -159,16 +159,16 @@ async function memory(c: Controller, arg: string): Promise<void> {
 }
 
 /** `/memoryadd`: learn from the whole conversation now (memory.extract). It
- *  asks the memory model, so not while a turn has the model. */
+ *  asks the memory model, so not while anything else has the model (a turn,
+ *  a task, a learn, another extract). */
 async function memoryAdd(c: Controller): Promise<void> {
-  if (!c.requireSession()) return;
-  const { phase, model } = c.getState();
-  if (phase === "running" || phase === "permission") return c.note("Finish or interrupt the current turn first (Esc).");
-  const task = c.getState().taskRunning;
-  if (task) return c.note(`Task ${task} is using the model \u2014 try again when it is done.`);
+  if (!c.requireSession() || !c.modelFree()) return;
+  const { model } = c.getState();
   if (!model) return c.error("No model selected.");
+  const messages = c.conversationMessages();
+  if (!messages.some((m) => (m as { role?: unknown } | null)?.role === "user")) return c.note("Nothing to learn from yet.");
   c.note("Extracting facts from this chat…");
-  await c.extractMemory<{ ok?: boolean; summary?: string }>({ model, messages: c.conversationMessages() }).then((d) => {
+  await c.extractMemory<{ ok?: boolean; summary?: string }>({ model, messages }).then((d) => {
     if (d?.ok) c.note("Memory updated with extracted facts.");
     else c.error(String(d?.summary ?? "Extracting memory failed."));
   }, failed(c, "Extracting memory"));
