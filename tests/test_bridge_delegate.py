@@ -97,6 +97,33 @@ def test_cancel_routes_to_aihub_registry(wire, monkeypatch):
     assert _wait(lambda: any(m.get("id") == 12 and m.get("done") for m in wire))
 
 
+def test_cancel_right_after_start_reaches_aihub(wire, monkeypatch):
+    """A cancel sent right after the request, before AIhub's handler has
+    registered its cancel event, still sets that event."""
+    from aihub import bridge as ab
+    got = {}
+
+    def slow(req_id, p):
+        time.sleep(0.2)     # the thread starts, but the event isn't there yet
+        ev = threading.Event()
+        with ab._reg_lock:
+            ab._cancel_events[req_id] = ev
+        try:
+            got["fired"] = ev.wait(2)
+            ab._done(req_id, {"cancelled": got["fired"]})
+        finally:
+            with ab._reg_lock:
+                ab._cancel_events.pop(req_id, None)
+
+    monkeypatch.setitem(ab._STREAMING, "kb.sync", slow)
+    _req("kb.sync", req_id=13)
+    _req("chat.cancel", {"request_id": 13}, req_id=None)
+    assert _wait(lambda: any(m.get("done") for m in wire))
+    assert got["fired"] is True
+    assert wire[-1] == {"id": 13, "done": True, "data": {"cancelled": True}}
+    assert _wait(lambda: 13 not in bridge._delegated)
+
+
 def test_permission_routes_to_aihub_queue(wire, monkeypatch):
     from aihub import bridge as ab
     started, got = _blocking_stream(ab, monkeypatch, "kb.sync", "_perm_queues")

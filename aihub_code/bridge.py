@@ -1,9 +1,10 @@
 """
 aihub-code NDJSON stdio bridge.
 
-Exposes a coding session to a front-end (the interactive UI, not built yet) over
-newline-delimited JSON on stdin/stdout. It adds no logic of its own: every
-method delegates to the harness.
+Exposes a coding session to the front-end (the interactive CLI in app/) over
+newline-delimited JSON on stdin/stdout. The code.* methods delegate to the
+harness; every other method AIhub's own bridge (aihub.bridge, v1.5.0) serves
+is delegated to it, its events put on this protocol channel (see _aihub).
 
 Protocol (newline-delimited JSON, both directions)
     in : {"id": <n>, "method": "<name>", "params": {...}}
@@ -29,8 +30,11 @@ code.resume; every other code.* method needs one):
     code.rules.add / code.rules.remove {tool, pattern?, scope}
     code.undo {confirm?, force?}       (streaming:) code.turn {text, images?}, code.compact
 
-Also answered: ping, and config.get, models.installed and cloud.models, which
-AIhub's own bridge handlers serve (read from the same ~/.aihub).
+Also answered: ping, and every AIhub method (config.*, models.*, chat.turn,
+kb.*, schedule.*, ...) except workdir.set, served by AIhub's own handlers from
+the same ~/.aihub. chat.cancel / chat.permission for such a stream are routed
+to AIhub's registries; a cancel that comes before AIhub's handler has
+registered its cancel event is held until it has.
 
 Each request runs on its own daemon thread; a single lock serialises writes to
 the protocol channel. Run as `python -m aihub_code.bridge` or via the
@@ -47,6 +51,7 @@ import queue
 import signal
 import sys
 import threading
+import time
 from typing import Any, Callable, Dict
 
 from . import __version__
@@ -461,7 +466,7 @@ def _run_delegated(req_id, method, params) -> bool:
     mod = _aihub()
     if method in mod._STREAMING:
         with _reg_lock:
-            _delegated.add(req_id)
+            _delegated.add(req_id)      # already, by _dispatch; kept for direct calls
         try:
             mod._STREAMING[method](req_id, params)
         finally:
@@ -500,10 +505,31 @@ def _control_delegated(method, params) -> None:
         if q is not None:
             q.put(params.get("allow") is True)      # only a JSON true is consent
         return
-    if ev is not None:
-        ev.set()
+    if ev is None:
+        # Sent right after the request: AIhub's handler hasn't registered its
+        # cancel event yet. Set it once it has (or give up when the stream ends).
+        threading.Thread(target=_cancel_when_registered, args=(rid,), daemon=True).start()
+        return
+    ev.set()
     if q is not None:   # unblock a pending permission wait as a denial
         q.put(False)
+
+
+def _cancel_when_registered(rid, poll: float = 0.01) -> None:
+    mod = _aihub()
+    while True:
+        with mod._reg_lock:
+            ev = mod._cancel_events.get(rid)
+            q = mod._perm_queues.get(rid)
+        if ev is not None:
+            ev.set()
+            if q is not None:
+                q.put(False)
+            return
+        with _reg_lock:
+            if rid not in _delegated:
+                return
+        time.sleep(poll)
 
 
 def _cancel_delegated() -> None:
@@ -565,8 +591,22 @@ def _dispatch(line: str) -> None:
             q.put(False)
         return
 
-    threading.Thread(target=_run, args=(msg.get("id"), method, params),
+    req_id = msg.get("id")
+    if _is_delegated_stream(method):
+        # Before the thread starts: a cancel right behind must find it ours to route.
+        with _reg_lock:
+            _delegated.add(req_id)
+    threading.Thread(target=_run, args=(req_id, method, params),
                      daemon=True).start()
+
+
+def _is_delegated_stream(method) -> bool:
+    if not isinstance(method, str) or method in _ONESHOT or method in _STREAMING or method in _DENY:
+        return False
+    try:
+        return method in _aihub()._STREAMING
+    except Exception:       # AIhub can't be imported: _run reports the method
+        return False
 
 
 def _kill_code_shells() -> None:
