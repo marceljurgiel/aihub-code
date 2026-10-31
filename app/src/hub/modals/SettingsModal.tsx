@@ -60,7 +60,7 @@ function FieldRow({
     <box flexDirection="row" height={1} flexShrink={0} onMouseDown={onFocus}>
       {/* aihub-code: under the see-through terminal theme bg3 shows nothing, so
           the focused field's label is reverse video (lift). */}
-      <text flexShrink={0} fg={focused ? (flatTheme() ? theme.fg0 : theme.accent) : theme.fg2} attributes={lift(focused)}>{`  ${label.padEnd(18)}`}</text>
+      <text flexShrink={0} fg={focused ? theme.accent : theme.fg2} {...lift(focused)}>{`  ${label.padEnd(18)}`}</text>
       <box
         flexGrow={1}
         flexShrink={1}
@@ -520,7 +520,7 @@ export function ContextConfigModal({
                 : "";
           return (
             <box key={n} onMouseDown={() => setSel(i)} backgroundColor={selected ? theme.bg3 : undefined}>
-              <text attributes={lift(selected)}>
+              <text {...lift(selected)}>
                 <span fg={selected ? theme.accent : theme.border}>{"▎"}</span>
                 <span fg={selected ? theme.fg0 : theme.fg1}>{n === 0 ? " custom…" : ` ${n.toLocaleString().padStart(7)}`}</span>
                 {isCurrent ? <span fg={theme.fg2}>{"  current"}</span> : null}

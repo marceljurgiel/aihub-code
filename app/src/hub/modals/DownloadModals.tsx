@@ -143,7 +143,7 @@ export function QuantPickerModal({
           const selected = idx === list.index;
           return (
             <box key={f.filename} backgroundColor={selected ? theme.bg3 : undefined} onMouseDown={() => list.setIndex(idx)}>
-              <text attributes={lift(selected)}>
+              <text {...lift(selected)}>
                 <span fg={selected ? theme.accent : theme.border}>{"▎"}</span>
                 <span fg={selected ? theme.fg0 : theme.fg1}>{` ${fit(f.filename, 38)}`}</span>
                 <span fg={theme.fg2}>{`  ${humanGb(f.size_gb ?? 0)}`}</span>

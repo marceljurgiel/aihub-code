@@ -664,7 +664,7 @@ export function McpModal({ onClose }: { onClose: () => void }) {
           <text fg={theme.fg0}>{"  Your own Google app — once, about 3 minutes:"}</text>
           {ownSteps.map((st, i) => (
             <text key={st.url}>
-              <span fg={theme.fg1} bg={theme.bg3} attributes={lift()}>{` ${i + 1} `}</span>
+              <span fg={theme.fg1} bg={theme.bg3} {...lift()}>{` ${i + 1} `}</span>
               <span fg={theme.fg1}>{fit(` ${st.text}`, width - 8)}</span>
             </text>
           ))}

@@ -9,7 +9,7 @@ import { lift, theme, track } from "../theme.ts";
 /** A keycap hint, e.g. [^O] or [enter]. */
 export function KeyHint({ k }: { k: string }) {
   return (
-    <span fg={theme.fg1} bg={theme.bg3} attributes={lift()}>{` ${k} `}</span>
+    <span fg={theme.fg1} bg={theme.bg3} {...lift()}>{` ${k} `}</span>
   );
 }
 
@@ -67,14 +67,14 @@ export function ListRow({
 }
 
 /** aihub-code (R-T3-1): a selected row's text in reverse video where the
- *  theme's bg3 is see-through (see theme.lift). */
+ *  theme's bg3 is see-through (see theme.lift); a child's own fg stays. */
 export function lifted(children: ReactNode, on: boolean): ReactNode {
-  const attr = lift(on);
-  if (!attr) return children;
+  const p = lift(on);
+  if (!p.attributes) return children;
   return Children.map(children, (c) => {
     if (!isValidElement(c)) return c;
-    const el = c as ReactElement<{ attributes?: number }>;
-    return cloneElement(el, { attributes: (el.props.attributes ?? 0) | attr });
+    const el = c as ReactElement<{ attributes?: number; fg?: ColorInput; bg?: ColorInput }>;
+    return cloneElement(el, { attributes: (el.props.attributes ?? 0) | p.attributes!, fg: el.props.fg ?? p.fg, bg: p.bg });
   });
 }
 

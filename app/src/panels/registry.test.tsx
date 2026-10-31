@@ -215,6 +215,45 @@ describe("the terminal theme (ruling R-T3-1)", () => {
   });
 });
 
+describe("the terminal theme: reverse video stays readable", () => {
+  // OpenTUI draws INVERSE by swapping fg and bg in its buffer *and* sending
+  // SGR 7, so the buffer (what captureSpans reads) holds the colours swapped.
+  // Over a see-through bg the swapped-in colour resolves to the other one and
+  // the cell goes out as e.g. `38;5;8 48;5;8 7`: a block in the text's colour,
+  // the text gone (seen live on the Models tabs and the selected row). And
+  // text with no colour of its own (the white snapshot) on the terminal's
+  // default-foreground bar is white on white.
+  const intent = (c: unknown) => (c as { intent?: string }).intent;
+  const ints = (c: unknown) => JSON.stringify((c as { toInts(): number[] }).toInts());
+  const white = (c: unknown) => intent(c) === "rgb" && ints(c) === "[255,255,255,255]";
+  const unreadable = (mm: Mounted) =>
+    mm.setup
+      .captureSpans()
+      .lines.flatMap((l) => l.spans)
+      .filter((s) => (s.attributes & TextAttributes.INVERSE) !== 0 && s.text.trim() !== "")
+      .filter((s) => (intent(s.fg) === intent(s.bg) && ints(s.fg) === ints(s.bg)) || (intent(s.fg) === "default" && white(s.bg)))
+      .map((s) => s.text);
+
+  for (const [id, title] of [
+    ["models", "Models"],
+    ["palette", "Command palette"],
+    ["temperature", "Temperature"],
+    ["theme", "Theme"],
+    ["settings", "Settings"],
+  ] as const) {
+    test(`${title}: no reversed text vanishes into its bar`, async () => {
+      m = await mountPanels({
+        answers: { "models.installed": { models: [{ name: "m", capabilities: ["tools", "vision"] }, { name: "b:2b" }] } },
+      });
+      const mm = m;
+      mm.c.openPanel(id);
+      await until(() => titled(mm, title), mm.settle);
+      await mm.settle();
+      expect(unreadable(mm)).toEqual([]);
+    });
+  }
+});
+
 describe("a resize while a panel is open (Review Focus 2)", () => {
   const ARGS: Args = { cont: false, mcp: [], kb: [] };
   let open: { setup: Awaited<ReturnType<typeof createTestRenderer>>; app: Launched } | undefined;

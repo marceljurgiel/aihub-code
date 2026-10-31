@@ -220,10 +220,38 @@ export function flatTheme(): boolean {
   return theme.bg3 === "transparent";
 }
 
-/** Text attributes for something AIhub lifts onto bg3 (`on`): reverse video
- *  in a flat theme, none where bg3 shows. */
-export function lift(on = true): number {
-  return on && flatTheme() ? TextAttributes.INVERSE : 0;
+/** Style props a lifted `<text>` / `<span>` spreads last (`{...lift(on)}`). */
+export interface LiftProps {
+  attributes?: number;
+  fg?: ColorInput;
+  bg?: ColorInput;
+}
+
+// OpenTUI draws INVERSE by swapping fg and bg in its buffer *and* sending
+// SGR 7. Over a see-through bg the swapped-in fg is see-through too and
+// resolves to the bg, so the cell goes out as e.g. `38;5;8 48;5;8 7`: a block
+// in the text's colour with the text gone. Only the terminal's default
+// colours (intent "default", sent as 39/49) invert cleanly, so a flat lift
+// names them outright.
+
+/** Props for something AIhub lifts onto bg3 (`on`): none where bg3 shows (the
+ *  caller's own bg3 does it); in a flat theme, reverse video on the terminal's
+ *  own colours: the bar takes the terminal's text colour, text with no colour
+ *  of its own the terminal's background colour, and a coloured span inside
+ *  keeps its colour on the bar. The fg overrides the caller's, so spread it
+ *  last; children with their own fg keep theirs. */
+export function lift(on = true): LiftProps {
+  if (!on || !flatTheme()) return {};
+  return { attributes: TextAttributes.INVERSE, fg: RGBA.defaultForeground(), bg: RGBA.defaultBackground() };
+}
+
+/** Props for an active tab (`on`): none where bg3 shows; in a flat theme a
+ *  `color` bar with the text in the terminal's background colour (under
+ *  OpenTUI's double swap above, the default fg comes out as the text and
+ *  `color` as the bar). Spread last. */
+export function pill(on: boolean, color: ColorInput): LiftProps {
+  if (!on || !flatTheme()) return {};
+  return { attributes: TextAttributes.INVERSE, fg: RGBA.defaultForeground(), bg: color };
 }
 
 /** A meter's empty track: bg3, or the rule colour where bg3 is see-through. */

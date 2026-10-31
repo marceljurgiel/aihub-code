@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { singleLinePaste } from "../clipboard.ts";
 import type { ColorInput } from "@opentui/core";
-import { theme, humanGb, fit, lift, track } from "../theme.ts";
+import { theme, humanGb, fit, lift, pill, track } from "../theme.ts";
 import { useBridge } from "../state/BridgeContext.tsx";
 import { useModals } from "../state/ModalContext.tsx";
 import { ModalShell, useShellHeight, useShellWidth } from "../ui/ModalShell.tsx";
@@ -64,7 +64,7 @@ function TabBar({
         const active = t.id === tab;
         return (
           <text key={t.id} onMouseDown={() => setTab(t.id)}>
-            <span fg={active ? theme.accent : theme.fg2} bg={active ? theme.bg3 : undefined} attributes={lift(active)}>
+            <span fg={active ? theme.accent : theme.fg2} bg={active ? theme.bg3 : undefined} {...pill(active, theme.accent)}>
               {` ${i + 1} ${t.label} `}
             </span>
             <span fg={theme.border}>{" "}</span>
@@ -539,7 +539,7 @@ export function ModelPickerModal({
                   extraW={extraW}
                 />
               ) : (
-                <text wrapMode="none" attributes={lift(selected)}>
+                <text wrapMode="none" {...lift(selected)}>
                   <span fg={selected ? theme.accent : theme.border}>{"▎"}</span>
                   <span fg={row.model === currentModel ? theme.accentSoft : selected ? theme.fg0 : theme.fg1}>
                     {` ${fit(row.model, 38).padEnd(plainW)}`}
@@ -726,7 +726,7 @@ function CatalogRow({
   const [place, placeCol] = PLACE[row.placement] ?? PLACE.none!;
   const fast = row.est_tps >= 10 ? theme.success : row.est_tps >= 3 ? theme.warn : theme.error;
   return (
-    <text attributes={lift(selected)}>
+    <text {...lift(selected)}>
       <span fg={selected ? theme.accent : col}>{"▎"}</span>
       <span fg={theme.accentSoft}>{installed ? "✓" : " "}</span>
       <span fg={row.fits ? (selected ? theme.fg0 : theme.fg1) : theme.fg2}>{pad(row.name, nameW)}</span>

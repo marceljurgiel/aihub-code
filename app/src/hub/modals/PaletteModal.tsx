@@ -82,7 +82,7 @@ export function PaletteModal({
               backgroundColor={selected ? theme.bg3 : undefined}
               onMouseDown={() => list.setIndex(idx)}
             >
-              <text attributes={lift(selected)}>
+              <text {...lift(selected)}>
                 <span fg={selected ? theme.accent : theme.border}>{"▎"}</span>
                 <span fg={selected ? theme.fg0 : theme.fg1}>{` ${fit(row.spec.label, 30)}`}</span>
                 {row.spec.key ? (

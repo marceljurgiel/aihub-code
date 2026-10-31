@@ -82,7 +82,7 @@ export function ThemeModal({
             <box key={id} flexDirection="row" backgroundColor={on ? theme.bg3 : undefined}>
               <text>
                 <span fg={on ? theme.accent : theme.border}>{"▌ "}</span>
-                <span fg={on ? theme.fg0 : theme.fg1} attributes={lift(on)}>{t.label.padEnd(16)}</span>
+                <span fg={on ? theme.fg0 : theme.fg1} {...lift(on)}>{t.label.padEnd(16)}</span>
                 {/* The theme's own colours: surfaces, text, accent, status. */}
                 <span fg={p.bg1}>{"██"}</span>
                 <span fg={p.bg3}>{"██"}</span>
@@ -107,7 +107,7 @@ export function ThemeModal({
                 return (
                   <span key={id || "own"} fg={on ? theme.fg0 : theme.fg2} bg={on ? theme.bg3 : undefined}>
                     <span fg={color}>{" ■"}</span>
-                    <span attributes={lift(on)}>{` ${(id ? ACCENTS[id]!.label : "Theme's").padEnd(8)}`}</span>
+                    <span {...lift(on)}>{` ${(id ? ACCENTS[id]!.label : "Theme's").padEnd(8)}`}</span>
                   </span>
                 );
               })}

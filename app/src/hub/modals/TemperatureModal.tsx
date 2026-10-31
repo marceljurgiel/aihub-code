@@ -68,7 +68,7 @@ export function TemperatureModal({
         <box marginTop={1} flexDirection="column">
           {PRESETS.map(([k, v, label]) => (
             <text key={k}>
-              <span fg={theme.fg1} bg={theme.bg3} attributes={lift()}>{` ${k} `}</span>
+              <span fg={theme.fg1} bg={theme.bg3} {...lift()}>{` ${k} `}</span>
               <span fg={Math.abs(v - t) < 0.05 ? theme.accent : theme.fg1}>{`  ${v.toFixed(1)}  `}</span>
               <span fg={theme.fg2}>{label}</span>
             </text>
