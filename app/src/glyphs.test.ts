@@ -6,7 +6,7 @@ const KEYS = Object.keys(makeGlyphs(false)).filter((k) => k !== "spinner") as Ex
 describe("glyphs", () => {
   test("the ideal set is the approved look", () => {
     const g = makeGlyphs(false);
-    expect(g.bullet).toBe("●");
+    expect(g.bullet).toBe("▸");
     expect(g.elbow).toBe("⎿");
     expect(g.diamond).toBe("◇");
     expect(g.boxOpen).toBe("☐");
@@ -20,7 +20,7 @@ describe("glyphs", () => {
 
   test("console-safe set swaps the characters the Windows fonts lack", () => {
     const g = makeGlyphs(true);
-    expect(g.bullet).toBe("●"); // in Consolas and Cascadia: kept
+    expect(g.bullet).toBe("▸"); // in Consolas and Cascadia: kept
     expect(g.elbow).toBe("└");
     expect(g.diamond).toBe("◊");
     expect(g.boxOpen).toBe("[ ]");

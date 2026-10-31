@@ -14,12 +14,12 @@ box and a status line.
  aihub-code 0.3.0 · gemma4:cloud · build · ~/my-project (main)
 
 > fix the failing test in calc.py
-● read_file calc.py
+▸ read_file calc.py
   ⎿ 12 lines
-● edit_file calc.py
+▸ edit_file calc.py
   ⎿ - return a - b
     + return a + b
-● run_shell pytest -q
+▸ run_shell pytest -q
   ⎿ 3 passed  [exit 0]
 Fixed: add() subtracted instead of adding.
 

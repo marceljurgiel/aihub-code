@@ -14,7 +14,7 @@
  */
 
 export const FONT_CHECK: Readonly<Record<string, { consolas: boolean; cascadia: boolean }>> = {
-  "●": { consolas: true, cascadia: true },
+  "▸": { consolas: true, cascadia: true },
   "⎿": { consolas: false, cascadia: false },
   "◇": { consolas: false, cascadia: true },
   "☐": { consolas: false, cascadia: false },
@@ -87,7 +87,7 @@ export interface Glyphs {
 }
 
 const IDEAL: Glyphs = {
-  bullet: "●",
+  bullet: "▸",
   elbow: "⎿",
   diamond: "◇",
   boxOpen: "☐",

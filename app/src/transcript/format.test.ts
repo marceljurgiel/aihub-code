@@ -42,7 +42,7 @@ describe("fmtUser", () => {
 });
 
 describe("fmtToolCall", () => {
-  test("● name main-argument", () => {
+  test("▸ name main-argument", () => {
     expect(t(fmtToolCall(F.tool_call_read, 80))).toEqual([`${G.bullet} read_file calc.py`]);
     expect(t(fmtToolCall(F.tool_call_edit, 80))).toEqual([`${G.bullet} edit_file calc.py`]);
     expect(t(fmtToolCall(F.tool_call_shell, 80))).toEqual([`${G.bullet} run_terminal pytest -q`]);
