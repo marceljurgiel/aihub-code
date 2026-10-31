@@ -39,7 +39,11 @@ def test_bridge_serves_aihubs_handlers_for_config_and_models(monkeypatch):
     monkeypatch.setattr(bridge, "_send", sent.append)
     for i, m in enumerate(("config.get", "models.installed", "cloud.models")):
         bridge._run(i, m, {})
-    assert [s["data"] for s in sent] == [{"cfg": 1}, {"models": []}, {"models": ["m:cloud"]}]
+    assert sent[0]["data"] == {"cfg": 1}
+    assert sent[2]["data"] == {"models": ["m:cloud"]}
+    # models.installed is AIhub's list plus the machine its fit is rated for
+    # (aihub_code.installed_fit).
+    assert sent[1]["data"]["models"] == [] and "target" in sent[1]["data"]
 
 
 def test_bridge_unknown_method_is_an_error(monkeypatch):

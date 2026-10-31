@@ -399,6 +399,13 @@ def _h_ping(p):
     return {"version": __version__}
 
 
+def _h_models_installed(p):
+    """AIhub's list, with where each local model runs and how fast (the
+    Installed tab shows it beside the size)."""
+    from .installed_fit import add_fit
+    return add_fit(_aihub()._ONESHOT["models.installed"](p))
+
+
 _ONESHOT: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "ping": _h_ping,
     "code.start": _h_code_start,
@@ -411,6 +418,7 @@ _ONESHOT: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "code.rules.add": _h_code_rules_add,
     "code.rules.remove": _h_code_rules_remove,
     "code.options": _h_code_options,
+    "models.installed": _h_models_installed,
 }
 
 

@@ -194,6 +194,55 @@ test("installed rows show size, params, context and what the model can do", asyn
   expect(f).toMatch(/nemotron-3-ultra:cloud\s+cloud\s+550B\s+256K\s+free\s+tools · thinking/);
 });
 
+test("installed rows show where each local model runs and how fast, best fit first", async () => {
+  const bridge = new PickerBridge();
+  const orig = bridge.request.bind(bridge);
+  const base = { status: "", quant: "", capabilities: ["tools"], max_context: 131072 };
+  bridge.request = async (m: string, p: any = {}) =>
+    m === "models.installed"
+      ? { target: TARGET, recent: [], models: [
+          { ...base, name: "glm-4.7:cloud", size_gb: 0, cloud: true, status: "retired", capabilities: [], params: "" },
+          { ...base, name: "huge:70b", size_gb: 40, cloud: false, params: "70B", fit: { fits: false, placement: "none", est_tps: 0, basis: "estimated", score: 0 } },
+          { ...base, name: "lfm2.5:8b", size_gb: 4.8, cloud: false, params: "8.5B", fit: fitOf(4.8, { placement: "partial", est_tps: 11.4, score: 55 }) },
+          { ...base, name: "gemma4:cloud", size_gb: 0, cloud: true, status: "free", params: "33B" },
+          { ...base, name: "llama3.2:3b", size_gb: 1.9, cloud: false, params: "3.2B", fit: fitOf(1.9, { basis: "measured", est_tps: 24, score: 70 }) },
+          { ...base, name: "gemma3:1b", size_gb: 0.8, cloud: false, params: "1B", fit: fitOf(0.8, { est_tps: 62, score: 81 }) },
+        ] }
+      : orig(m, p);
+  await render(bridge, { width: 110, height: 34 });
+  const f = await until((x) => x.includes("speed") && x.includes("huge:70b"));
+  expect(f).toMatch(/size\s+params\s+ctx\s+speed\s+where\s+can do/);
+  expect(f).toMatch(/gemma3:1b\s+0\.8 GB\s+1B\s+128K\s+~62 t\/s\s+GPU\s+tools/);
+  expect(f).toMatch(/llama3\.2:3b\s+1\.9 GB\s+3\.2B\s+128K\s+24 t\/s✓\s+GPU\s+tools/);
+  expect(f).toMatch(/lfm2\.5:8b\s+4\.8 GB\s+8\.5B\s+128K\s+~11 t\/s\s+part\s+tools/);
+  expect(f).toMatch(/huge:70b\s+40 GB\s+70B\s+128K\s+—\s+✗/);
+  expect(f).toMatch(/gemma4:cloud\s+cloud\s+33B\s+128K\s+free\s+tools/);
+  // Runs here (best score first), then usable cloud, then what doesn't fit, then retired.
+  const order = ["gemma3:1b", "llama3.2:3b", "lfm2.5:8b", "gemma4:cloud", "huge:70b", "glm-4.7:cloud"];
+  const at = order.map((n) => f.indexOf(n));
+  expect(at.every((x) => x >= 0)).toBe(true);
+  expect([...at].sort((a, b) => a - b)).toEqual(at);
+});
+
+test("a name longer than the name column is cut, so the columns stay aligned (84 columns)", async () => {
+  const bridge = new PickerBridge();
+  const orig = bridge.request.bind(bridge);
+  const base = { cloud: false, status: "", quant: "", capabilities: ["tools"], max_context: 131072, params: "8B" };
+  bridge.request = async (m: string, p: any = {}) =>
+    m === "models.installed"
+      ? { recent: [], models: [
+          { ...base, name: "gemma-4-12b-it-q4_k_m:latest", size_gb: 6.6, fit: fitOf(6.6, { score: 60 }) },
+          { ...base, name: "llama3.2:3b", size_gb: 1.9, fit: fitOf(1.9, { score: 50 }) },
+        ] }
+      : orig(m, p);
+  await render(bridge, { width: 84, height: 30 });
+  const f = await until((x) => x.includes("llama3.2:3b"));
+  const rows = f.split("\n").filter((l) => / GB /.test(l));
+  expect(rows.length).toBe(2);
+  expect(new Set(rows.map((l) => l.indexOf(" GB "))).size).toBe(1);
+  expect(rows[0]).toContain("…");
+});
+
 // Real installed lists: long tags, every capability, a retired cloud model.
 const MANY_INSTALLED = [
   { name: "embeddinggemma:latest", size_gb: 0.6, capabilities: ["embedding"], max_context: 2048, params: "308M" },

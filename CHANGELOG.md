@@ -24,6 +24,9 @@ All of AIhub in the CLI.
 - `/tools`, `/websearch` (AIhub's one-shot search check), `/temp`, and `/new`
   as an alias of `/clear`.
 - A note at start when a newer Ollama is out.
+- The Installed tab of `/models` shows where each local model runs (GPU,
+  part, CPU, ✗) and how fast (✓ = measured on your machine), and lists the
+  best fit first, then cloud models.
 
 ### Changed
 - `/clear` and `/new` start from a fresh screen; the old session's resume

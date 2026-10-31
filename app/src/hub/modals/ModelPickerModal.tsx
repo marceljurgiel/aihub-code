@@ -252,9 +252,14 @@ export function ModelPickerModal({
           caps: m.capabilities || [],
           params: m.params || "",
           ctx: m.max_context || 0,
+          fit: m.fit,
+          rank: fitRank(m),
         }))
         .filter((r) => fuzzyScore(q, r.model) >= 0)
-        .sort((a, b) => fuzzyScore(q, b.model) - fuzzyScore(q, a.model));
+        .sort(
+          (a, b) =>
+            fuzzyScore(q, b.model) - fuzzyScore(q, a.model) || a.rank[0] - b.rank[0] || b.rank[1] - a.rank[1],
+        );
     if (tab === "cloud")
       return [
         ...ocloud.map((m) => ({
@@ -430,7 +435,10 @@ export function ModelPickerModal({
   const extraW = Math.max(0, width - 4 - FIXED_COLS - nameW);
   // Installed / Cloud: one name column as wide as the longest name shown,
   // but never so wide that the size columns are pushed off the row.
-  const plainW = Math.min(38, width - 4 - 36, Math.max(10, ...rows.map((r: any) => String(r.model ?? "").length)));
+  // aihub-code: Installed also has the speed column, and keeps room for the
+  // first capability badge.
+  const fixedW = tab === "installed" ? 36 + SPEED_W + 7 : 36;
+  const plainW = Math.min(38, width - 4 - fixedW, Math.max(10, ...rows.map((r: any) => String(r.model ?? "").length)));
   /** Cells left on an Installed / Cloud row after its fixed columns — what
    *  the capability badges and the description may use. A row must stay one
    *  line: a wrapped row pushes the list over the hint bar and out of the
@@ -438,7 +446,7 @@ export function ModelPickerModal({
   const restOf = (row: any) =>
     width - 4 -
     (2 + plainW + 10 +
-      (row.kind === "installed" ? 14 : 0) +
+      (row.kind === "installed" ? 14 + SPEED_W : 0) +
       (row.keyReady === false ? 10 : 0) +
       (row.status !== undefined || row.kind === "installed" ? 10 : 0));
   return (
@@ -515,7 +523,7 @@ export function ModelPickerModal({
         {tab === "installed" ? (
           <box flexShrink={0} height={1}>
             <text fg={theme.fg2}>
-              {`  ${"model".padEnd(plainW)}  ${"size".padStart(8)}${"params".padStart(7)}${"ctx".padStart(7)}${"".padEnd(10)}  can do`}
+              {`  ${"model".padEnd(plainW)}  ${"size".padStart(8)}${"params".padStart(7)}${"ctx".padStart(7)}${"speed".padStart(SPEED_W)}${"  where".padEnd(10)}  can do`}
             </text>
           </box>
         ) : null}
@@ -542,17 +550,18 @@ export function ModelPickerModal({
                 <text wrapMode="none" {...lift(selected)}>
                   <span fg={selected ? theme.accent : theme.border}>{"▎"}</span>
                   <span fg={row.model === currentModel ? theme.accentSoft : selected ? theme.fg0 : theme.fg1}>
-                    {` ${fit(row.model, 38).padEnd(plainW)}`}
+                    {` ${fit(row.model, plainW).padEnd(plainW)}`}
                   </span>
                   <span fg={theme.fg2}>{`  ${row.sub.padStart(8)}`}</span>
                   {row.kind === "installed" ? (
                     <span fg={theme.fg2}>{`${(row.params || "").padStart(7)}${humanCtx(row.ctx).padStart(7)}`}</span>
                   ) : null}
+                  {row.kind === "installed" ? <SpeedCell fit={row.fit} /> : null}
                   {row.keyReady === false ? <span fg={theme.warn}>{"  ⚲ no key"}</span> : null}
                   {row.status !== undefined ? (
                     <StatusBadge status={row.status} probing={probing} />
                   ) : row.kind === "installed" ? (
-                    <span>{" ".repeat(10)}</span>
+                    <PlaceCell fit={row.fit} />
                   ) : null}
                   {row.caps ? (
                     <CapBadges caps={row.caps} width={row.desc !== undefined ? 36 : 0} max={restOf(row)} />
@@ -708,6 +717,35 @@ const PLACE: Record<string, [string, ColorInput]> = {
   cpu: ["CPU", theme.warn],
   none: ["✗", theme.error],
 };
+
+// aihub-code: the Installed tab rates each local model too (the bridge's
+// models.installed adds AIhub's fit; aihub_code/installed_fit.py).
+const SPEED_W = 10;
+type Fit = { fits: boolean; placement: string; est_tps: number; basis: string; score?: number };
+
+/** Cloud models that can't be used now sort below the ones that can. */
+const UNUSABLE = new Set(["retired", "missing", "error", "signin"]);
+
+/** [group, score] for the Installed order: runs here (best score first),
+ *  usable cloud, doesn't fit here, unusable cloud. A local model without a
+ *  fit (the rating failed) stays with the local ones. */
+export function fitRank(m: { cloud?: boolean; status?: string; fit?: Fit }): [number, number] {
+  if (m.cloud) return [UNUSABLE.has(m.status ?? "") ? 3 : 1, 0];
+  if (!m.fit) return [0, -1];
+  return m.fit.fits ? [0, m.fit.score ?? 0] : [2, 0];
+}
+
+function SpeedCell({ fit: f }: { fit?: Fit }) {
+  if (!f) return <span>{" ".repeat(SPEED_W)}</span>;
+  const fast = f.est_tps >= 10 ? theme.success : f.est_tps >= 3 ? theme.warn : theme.error;
+  return <span fg={f.fits ? fast : theme.fg2}>{padL(tpsLabel(f), SPEED_W)}</span>;
+}
+
+function PlaceCell({ fit: f }: { fit?: Fit }) {
+  if (!f) return <span>{" ".repeat(10)}</span>;
+  const [place, col] = PLACE[f.placement] ?? PLACE.none!;
+  return <span fg={col}>{`  ${place.padEnd(8)}`}</span>;
+}
 
 function CatalogRow({
   row,
