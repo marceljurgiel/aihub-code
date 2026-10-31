@@ -167,7 +167,7 @@ AIhub, as panels above the prompt (Esc closes one):
 
 | Command | |
 |---|---|
-| `/model [name]` | switch to a model directly (starts a new session) |
+| `/model [name]` | the Models panel; with a name, switch to that model directly (starts a new session) |
 | `/models` | installed models, catalogue with hardware fit, downloads, context per model |
 | `/hardware` | what this machine and the Ollama server have |
 | `/agent [code\|chat\|name]` | choose what you talk to (see below) |

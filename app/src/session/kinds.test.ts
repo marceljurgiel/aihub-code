@@ -542,14 +542,13 @@ describe("useModel under hub kinds (AIhub: a new chat on the new model)", () => 
     expect(m.bridge.lastStream.params.messages).toEqual([SYS, { role: "user", content: "hello" }]);
   });
 
-  test("/model picker under chat: the picked model starts a new chat, not a code session", async () => {
+  test("bare /model under chat opens the Models panel; the picked model starts a new chat, not a code session", async () => {
     const m = await started();
-    m.bridge.answers["models.installed"] = { models: [{ name: "gemma4:cloud" }, { name: "llama3.2:3b" }] };
-    m.bridge.answers["cloud.models"] = { models: [] };
     await m.c.setKind({ type: "chat" });
     await m.run("/model");
-    expect(m.c.getState().picker?.kind).toBe("model");
-    await m.c.pick("llama3.2:3b");
+    expect(m.c.getState().panel).toEqual({ id: "models" });
+    await m.c.useModel({ name: "llama3.2:3b", backend: "ollama" });
+    m.c.closePanel();
     await settle();
     expect(m.bridge.to("chat.start").at(-1)!.params).toEqual({ model: "llama3.2:3b", messages: [] });
     expect(m.bridge.to("code.start")).toHaveLength(1);

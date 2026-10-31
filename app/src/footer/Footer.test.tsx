@@ -941,23 +941,6 @@ describe("the undo question", () => {
   });
 });
 
-describe("activity while idle", () => {
-  test('"loading models…" has no "esc to interrupt": there is nothing to interrupt', async () => {
-    m = await mount({ answers: { "cloud.models": { models: [] } } });
-    let release!: (v: unknown) => void;
-    const orig = m.bridge.request.bind(m.bridge);
-    m.bridge.request = ((method: string, params: Record<string, unknown> = {}) =>
-      method === "cloud.models" ? new Promise<unknown>((r) => (release = r)) : orig(method, params)) as typeof m.bridge.request;
-    await type(m, "/model");
-    await enter(m);
-    expect(text(m)).toContain("loading models…");
-    expect(text(m)).not.toContain("esc to interrupt");
-    release({ models: [] });
-    await m.settle();
-    expect(text(m)).toContain("Choose a model");
-  });
-});
-
 describe("narrow terminals", () => {
   test.each([8, 12, 20])("%d columns: nothing crashes, nothing is wider", async (w) => {
     m = await running({ width: w });

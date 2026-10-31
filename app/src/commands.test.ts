@@ -677,57 +677,27 @@ describe("/sessions and /resume", () => {
 });
 
 describe("/model", () => {
-  const CLOUD = {
-    models: [
-      { name: "gemma4:cloud", status: "free", installed: true },
-      { name: "gpt-oss:120b-cloud", status: "free", installed: false },
-      { name: "old-thing:cloud", status: "retired", installed: false },
-    ],
-  };
-
-  test("the picker lists installed models, then the cloud ones not yet installed (not the retired)", async () => {
+  test("bare /model opens the Models panel (spec §4), not the 0.2.0 picker", async () => {
     const m = await started();
-    m.bridge.answers["cloud.models"] = CLOUD;
-    await m.run("/model");
-    const st = m.c.getState();
-    expect(st.phase).toBe("picker");
-    expect(st.picker!.kind).toBe("model");
-    expect(st.picker!.items.map((i) => i.id)).toEqual(["gemma4:cloud", "llama3.2:3b", "gpt-oss:120b-cloud"]);
-    expect(st.picker!.items[2]!.label).toContain("cloud");
+    expect(await m.run("/model")).toEqual([]);
+    expect(m.c.getState().panel).toEqual({ id: "models" });
+    expect(m.c.getState().picker).toBeNull();
+    expect(m.bridge.to("models.installed")).toHaveLength(0);
+    expect(m.bridge.to("cloud.models")).toHaveLength(0);
   });
 
-  test('"loading models…" shows while the lists come in', async () => {
-    const m = await started();
-    let release!: (v: unknown) => void;
-    // The mock answers at once; hold this one back to see the state in between.
-    const orig = m.bridge.request.bind(m.bridge);
-    m.bridge.request = ((method: string, params: Record<string, unknown> = {}) =>
-      method === "cloud.models" ? new Promise<unknown>((r) => (release = r)) : orig(method, params)) as typeof m.bridge.request;
-    m.c.submit("/model");
-    await settle();
-    expect(m.c.getState().activity?.label).toBe("loading models…");
-    expect(m.c.getState().phase).toBe("idle");
-    release(CLOUD);
-    await settle();
-    expect(m.c.getState().activity).toBeNull();
-    expect(m.c.getState().phase).toBe("picker");
+  test("during a turn bare /model opens the panel view-only, as /models does", async () => {
+    const m = await running();
+    expect(await m.run("/model")).toEqual([]);
+    expect(m.c.getState().panel).toEqual({ id: "models", viewOnly: true });
   });
 
-  test("when the cloud list fails, the installed models are listed and it is said", async () => {
+  test("a model picked in the panel starts a new session with the same mode; the old one stays resumable", async () => {
     const m = await started();
-    m.bridge.answers["cloud.models"] = new Error("ollama.com did not answer");
-    const out = await m.run("/model");
-    expect(m.c.getState().picker!.items.map((i) => i.id)).toEqual(["gemma4:cloud", "llama3.2:3b"]);
-    expect(out).toEqual(["could not load the cloud list — showing installed models"]);
-  });
-
-  test("choosing a model starts a new session with the same mode; the old one stays resumable", async () => {
-    const m = await started();
-    m.bridge.answers["cloud.models"] = CLOUD;
     await m.run("/mode plan");
     await m.run("/model");
     const before = m.sink.lines.length;
-    await m.c.pick("llama3.2:3b");
+    await m.c.useModel({ name: "llama3.2:3b", backend: "ollama" });
     expect(m.bridge.to("code.start").at(-1)!.params).toMatchObject({ model: "llama3.2:3b", mode: "plan", cwd: "/home/alex/proj" });
     expect(m.sink.lines.slice(before).join("\n")).toContain("new session with llama3.2:3b");
     expect(m.c.getState()).toMatchObject({ phase: "idle", model: "llama3.2:3b", sessionId: "s-llama3.2:3b", mode: "plan" });
@@ -748,10 +718,9 @@ describe("/model", () => {
     expect(m.bridge.to("code.start")).toHaveLength(1);
   });
 
-  test("Esc closes the picker and keeps the session", async () => {
+  test("Esc closes that picker and keeps the session", async () => {
     const m = await started();
-    m.bridge.answers["cloud.models"] = CLOUD;
-    await m.run("/model");
+    await m.run("/model nope:1b");
     await m.c.pick(null);
     expect(m.c.getState()).toMatchObject({ phase: "idle", picker: null, model: "gemma4:cloud" });
     expect(m.exits).toEqual([]);
@@ -765,10 +734,10 @@ describe("/model", () => {
     expect(m.c.getState()).toMatchObject({ phase: "idle", sessionId: "s-gemma4:cloud", model: "gemma4:cloud" });
   });
 
-  test("not while a turn runs", async () => {
+  test("/model <name> not while a turn runs", async () => {
     const m = await running();
-    expect(await m.run("/model")).toEqual([WAIT]);
-    expect(m.bridge.to("models.installed")).toHaveLength(0);
+    expect(await m.run("/model llama3.2:3b")).toEqual([WAIT]);
+    expect(m.bridge.to("code.start")).toHaveLength(1);
   });
 });
 
@@ -789,21 +758,26 @@ describe("after a failed start (the prompt stays usable for /model and /sessions
     return { ...m, run };
   }
 
-  test("/model opens the picker; a choice starts a session", async () => {
+  test("/model opens the Models panel; a model picked there starts a session", async () => {
     const m = await failed();
-    const out = await m.run("/model");
-    expect(out.join("\n")).not.toContain("try again");
-    expect(m.c.getState().picker?.kind).toBe("model");
-    await m.c.pick("llama3.2:3b");
+    expect(await m.run("/model")).toEqual([]);
+    expect(m.c.getState().panel).toEqual({ id: "models" });
+    await m.c.useModel({ name: "llama3.2:3b", backend: "ollama" });
+    m.c.closePanel();
     expect(m.c.getState()).toMatchObject({ phase: "idle", sessionId: "s-llama3.2:3b", error: null });
   });
 
-  test("Esc in that picker goes back to where it was: no exit, the error stays", async () => {
+  test("/model <name> after a failed start starts a session too", async () => {
+    const m = await failed();
+    await m.run("/model llama3.2:3b");
+    expect(m.c.getState()).toMatchObject({ phase: "idle", sessionId: "s-llama3.2:3b", error: null });
+  });
+
+  test("Esc in the panel goes back to where it was: no exit, the error stays", async () => {
     const m = await failed();
     await m.run("/model");
-    expect(m.c.getState().picker).not.toBeNull();
-    await m.c.pick(null);
-    expect(m.c.getState()).toMatchObject({ phase: "error", picker: null });
+    m.c.closePanel();
+    expect(m.c.getState()).toMatchObject({ phase: "error", panel: null });
     expect(m.exits).toEqual([]);
   });
 
@@ -907,16 +881,16 @@ describe("holding the session still", () => {
     return h;
   }
 
-  test("while /model loads its lists, a typed prompt waits; the picker opens over no turn", async () => {
+  test("while /sessions loads its list, a typed prompt waits; the picker opens over no turn", async () => {
     const m = await started();
-    const h = hold(m, "cloud.models");
-    m.c.submit("/model");
+    const h = hold(m, "code.sessions");
+    m.c.submit("/sessions");
     await settle();
     m.c.submit("hello");
     await settle();
     expect(m.bridge.streams).toEqual([]);
     expect(m.c.getState().queue).toEqual(["hello"]);
-    h.release({ models: [] });
+    h.release({ sessions: [{ id: "a", title: "x", turns: 1, updated: "" }] });
     await settle();
     expect(m.c.getState().phase).toBe("picker");
     expect(m.bridge.streams).toEqual([]);
@@ -925,27 +899,26 @@ describe("holding the session still", () => {
     expect(m.bridge.lastStream.params).toEqual({ text: "hello" });
   });
 
-  test("a second /model while loading is refused", async () => {
+  test("a second /sessions while loading is refused", async () => {
     const m = await started();
-    const h = hold(m, "cloud.models");
-    m.c.submit("/model");
+    const h = hold(m, "code.sessions");
+    m.c.submit("/sessions");
     await settle();
-    const before = m.bridge.to("models.installed").length;
-    expect(await m.run("/model")).toEqual(["still loading the model list"]);
-    expect(m.bridge.to("models.installed")).toHaveLength(before);
-    h.release({ models: [] });
+    expect(await m.run("/sessions")).toEqual(["still loading the list"]);
+    h.release({ sessions: [{ id: "a", title: "x", turns: 1, updated: "" }] });
     await settle();
-    expect(m.c.getState().picker!.kind).toBe("model");
+    expect(m.c.getState().picker!.kind).toBe("session");
   });
 
   test("other session commands wait for the list too", async () => {
     const m = await started();
-    const h = hold(m, "cloud.models");
-    m.c.submit("/model");
+    const h = hold(m, "code.sessions");
+    m.c.submit("/sessions");
     await settle();
-    expect(await m.run("/clear")).toEqual(["still loading the model list"]);
-    expect(await m.run("/compact")).toEqual(["still loading the model list"]);
-    h.release({ models: [] });
+    expect(await m.run("/clear")).toEqual(["still loading the list"]);
+    expect(await m.run("/compact")).toEqual(["still loading the list"]);
+    expect(await m.run("/model llama3.2:3b")).toEqual(["still loading the list"]);
+    h.release({ sessions: [] });
     await settle();
   });
 
@@ -968,7 +941,7 @@ describe("holding the session still", () => {
     m.bridge.answers["code.sessions"] = { sessions: [{ id: "a", title: "x", turns: 1, updated: "" }] };
     await m.run("/sessions");
     const picker = m.c.getState().picker;
-    for (const cmd of ["/compact", "/resume zz", "/clear", "/model", "/sessions", "/undo"]) {
+    for (const cmd of ["/compact", "/resume zz", "/clear", "/model x", "/sessions", "/undo"]) {
       expect(await m.run(cmd)).toEqual(["choose or cancel the picker first"]);
     }
     expect(m.c.getState().picker).toBe(picker);

@@ -1052,16 +1052,16 @@ describe("final review fixes", () => {
       expect(m.sink.lines.at(-1)).toBe("mode can change once the undo is done");
     });
 
-    test("while a list loads (/model)", async () => {
+    test("while a list loads (/sessions)", async () => {
       const m = await started();
       const gate = pending();
-      m.bridge.answers["models.installed"] = () => gate.p;
-      const listing = m.c.switchModel("");
+      m.bridge.answers["code.sessions"] = () => gate.p;
+      const listing = m.c.openSessions();
       await settle();
       m.c.setMode("plan");
       noModeCall(m);
       expect(m.sink.lines.at(-1)).toBe("mode can change when the list has loaded");
-      gate.resolve({ models: [] });
+      gate.resolve({ sessions: [] });
       await listing;
     });
   });

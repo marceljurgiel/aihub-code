@@ -300,7 +300,7 @@ export class Controller {
   private modeBusy = false;
   // An undo is in flight (preview or confirm): no turn may start meanwhile.
   private undoBusy = false;
-  // A picker's list is being fetched (/model, /sessions): same.
+  // A picker's list is being fetched (/sessions): same.
   private listing = false;
   // Where Esc in a command's picker goes back to, when there is no session to
   // go back to (after a failed start: "error"). Null for start-up pickers.
@@ -1288,7 +1288,7 @@ export class Controller {
       return false;
     }
     if (this.listing) {
-      this.note("still loading the model list");
+      this.note("still loading the list");
       return false;
     }
     if (picker) {
@@ -1401,24 +1401,12 @@ export class Controller {
     await this.replaceSession(() => this.startSession(this.state.model, false, { mode: this.state.mode, fresh: { previous: this.codeResumeId() } }));
   }
 
-  /** `/model [name]`: a new session on another model (the old one stays
-   *  resumable). Without a name: a picker of installed and cloud models. */
+  /** `/model <name>`: a new session on another model (the old one stays
+   *  resumable). Bare `/model` opens the Models window (commands.ts). */
   async switchModel(name: string): Promise<void> {
     if (!this.canSwitch()) return;
-    if (name && this.state.kind.type !== "code") return this.useModel({ name, backend: "ollama" });
-    if (name) {
-      await this.replaceSession(() => this.startSession(name, true, { mode: this.state.mode, divider: "model" }));
-      return;
-    }
-    this.listing = true;
-    this.set({ activity: { label: "loading models\u2026", since: this.now() } });
-    try {
-      this.openPickerIfFree({ kind: "model", title: "Choose a model", items: await this.modelChoices() });
-    } finally {
-      this.listing = false;
-      this.set({ activity: null });
-      this.drainQueue(); // prompts typed meanwhile (the picker, if open, still holds them)
-    }
+    if (this.state.kind.type !== "code") return this.useModel({ name, backend: "ollama" });
+    await this.replaceSession(() => this.startSession(name, true, { mode: this.state.mode, divider: "model" }));
   }
 
   /** A model picked in the models window: a new code session on it, with its
@@ -1488,24 +1476,6 @@ export class Controller {
       return;
     }
     this.openPicker(picker, this.state.sessionId ? null : phase);
-  }
-
-  /** Installed models first, then cloud ones that are not installed yet. If
-   *  the cloud list cannot be had, the installed ones are still offered. */
-  private async modelChoices(): Promise<PickerItem[]> {
-    const { models = [] } = await this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {});
-    const items: PickerItem[] = models.map((m) => ({ id: String(m.name), label: String(m.name) }));
-    try {
-      const { models: cloud = [] } = await this.o.bridge.request<{ models?: { name: string; status?: string; installed?: boolean }[] }>("cloud.models", {});
-      const have = new Set(items.map((i) => i.id));
-      for (const m of cloud) {
-        if (m.installed || have.has(m.name) || m.status === "retired" || m.status === "missing") continue;
-        items.push({ id: String(m.name), label: `${m.name} (cloud${m.status === "free" || m.status === "paid" ? `, ${m.status}` : ""})` });
-      }
-    } catch {
-      this.note("could not load the cloud list \u2014 showing installed models");
-    }
-    return items;
   }
 
   /** `/sessions`, `/resume`: pick one of this folder's earlier sessions. */
