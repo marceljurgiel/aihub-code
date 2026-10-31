@@ -75,3 +75,52 @@ def test_the_bridge_serves_models_installed_with_fit(server, monkeypatch):
     assert lines[-1]["done"] is True
     assert {m["name"]: "fit" in m for m in data["models"]} == {
         "llama3.2:3b": True, "lfm2.5:8b": True, "huge:70b": True, "gemma4:cloud": False}
+
+
+# ── MoE, measured-but-none, one bad row, embedding models ─────────────────────
+
+def _local(name, size, params, caps=("tools",)):
+    return {"name": name, "size_gb": size, "cloud": False, "params": params, "capabilities": list(caps)}
+
+
+def test_active_params_come_from_the_tag_the_catalog_or_known_moe_families():
+    assert installed_fit.active_b("qwen3:30b-a3b") == 3.0
+    assert installed_fit.active_b("qwen3-coder:30b", {"qwen3-coder": {"30b-a3b-q4_K_M": {}}}) == 3.0
+    assert installed_fit.active_b("gpt-oss:20b") == 3.6
+    assert installed_fit.active_b("lfm2.5:8b") == 1.5
+    assert installed_fit.active_b("llama3.2:3b") is None
+    assert installed_fit.active_b("qwen3:8b") is None            # dense size of a MoE-mixed family
+
+
+def test_a_moe_model_is_rated_by_its_active_params(server):
+    out = installed_fit.add_fit({"models": [_local("lfm2.5:8b", 4.8, "8.5B"), _local("dense:8b", 4.8, "8.5B")]})
+    moe, dense = (m["fit"] for m in out["models"])
+    assert moe["est_tps"] > 2.5 * dense["est_tps"]               # ~1.5B active read per token
+
+
+def test_a_model_measured_on_this_machine_fits_whatever_the_estimate(monkeypatch):
+    from aihub import target
+
+    class Tiny(_Target):
+        vram_gb = 2.0
+
+    monkeypatch.setattr(target, "current", lambda: Tiny())
+    monkeypatch.setattr(target, "measured_tps", lambda url, name: 6.5)
+    monkeypatch.setattr(installed_fit, "_measured_on_gpu", lambda url, name: False)
+    f = installed_fit.add_fit({"models": [_local("qwen3:14b", 30.0, "14B")]})["models"][0]["fit"]
+    assert (f["fits"], f["placement"], f["est_tps"], f["basis"]) == (True, "partial", 6.5, "measured")
+
+
+def test_one_bad_row_does_not_take_the_fit_from_the_others(server):
+    out = installed_fit.add_fit({"models": [
+        {"name": "odd", "size_gb": "big", "cloud": False},
+        _local("llama3.2:3b", 1.9, "3.2B"),
+    ]})
+    assert "fit" not in out["models"][0]
+    assert out["models"][1]["fit"]["placement"] == "gpu"
+
+
+def test_an_embedding_model_gets_a_placement_but_no_speed_or_score(server):
+    f = installed_fit.add_fit({"models": [_local("embeddinggemma:300m", 0.6, "308M", ["embedding"])]})["models"][0]["fit"]
+    assert f["kind"] == "embedding" and f["fits"] is True and f["placement"] == "gpu"
+    assert "est_tps" not in f and "score" not in f

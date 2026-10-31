@@ -207,6 +207,7 @@ test("installed rows show where each local model runs and how fast, best fit fir
           { ...base, name: "gemma4:cloud", size_gb: 0, cloud: true, status: "free", params: "33B" },
           { ...base, name: "llama3.2:3b", size_gb: 1.9, cloud: false, params: "3.2B", fit: fitOf(1.9, { basis: "measured", est_tps: 24, score: 70 }) },
           { ...base, name: "gemma3:1b", size_gb: 0.8, cloud: false, params: "1B", fit: fitOf(0.8, { est_tps: 62, score: 81 }) },
+          { ...base, name: "embeddinggemma:300m", size_gb: 0.6, cloud: false, params: "308M", capabilities: ["embedding"], fit: { fits: true, placement: "gpu", need_gb: 1.2, kind: "embedding" } },
         ] }
       : orig(m, p);
   await render(bridge, { width: 110, height: 34 });
@@ -217,8 +218,11 @@ test("installed rows show where each local model runs and how fast, best fit fir
   expect(f).toMatch(/lfm2\.5:8b\s+4\.8 GB\s+8\.5B\s+128K\s+~11 t\/s\s+part\s+tools/);
   expect(f).toMatch(/huge:70b\s+40 GB\s+70B\s+128K\s+—\s+✗/);
   expect(f).toMatch(/gemma4:cloud\s+cloud\s+33B\s+128K\s+free\s+tools/);
-  // Runs here (best score first), then usable cloud, then what doesn't fit, then retired.
-  const order = ["gemma3:1b", "llama3.2:3b", "lfm2.5:8b", "gemma4:cloud", "huge:70b", "glm-4.7:cloud"];
+  // An embedding model: where it runs, but no speed.
+  expect(f).toMatch(/embeddinggemma:300m\s+0\.6 GB\s+308M\s+128K\s+embed\s+GPU/);
+  // Runs here (best score first), then usable cloud, then embedding models and
+  // what doesn't fit, then retired.
+  const order = ["gemma3:1b", "llama3.2:3b", "lfm2.5:8b", "gemma4:cloud", "embeddinggemma:300m", "huge:70b", "glm-4.7:cloud"];
   const at = order.map((n) => f.indexOf(n));
   expect(at.every((x) => x >= 0)).toBe(true);
   expect([...at].sort((a, b) => a - b)).toEqual(at);

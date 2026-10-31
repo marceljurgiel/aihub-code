@@ -721,24 +721,28 @@ const PLACE: Record<string, [string, ColorInput]> = {
 // aihub-code: the Installed tab rates each local model too (the bridge's
 // models.installed adds AIhub's fit; aihub_code/installed_fit.py).
 const SPEED_W = 10;
-type Fit = { fits: boolean; placement: string; est_tps: number; basis: string; score?: number };
+type Fit = { fits: boolean; placement: string; est_tps?: number; basis?: string; score?: number; kind?: string };
 
 /** Cloud models that can't be used now sort below the ones that can. */
 const UNUSABLE = new Set(["retired", "missing", "error", "signin"]);
 
 /** [group, score] for the Installed order: runs here (best score first),
- *  usable cloud, doesn't fit here, unusable cloud. A local model without a
- *  fit (the rating failed) stays with the local ones. */
+ *  usable cloud, embedding models and what doesn't fit here, unusable cloud.
+ *  A local model without a fit (the rating failed) stays with the local ones. */
 export function fitRank(m: { cloud?: boolean; status?: string; fit?: Fit }): [number, number] {
   if (m.cloud) return [UNUSABLE.has(m.status ?? "") ? 3 : 1, 0];
   if (!m.fit) return [0, -1];
+  if (m.fit.kind === "embedding") return [2, 1];
   return m.fit.fits ? [0, m.fit.score ?? 0] : [2, 0];
 }
 
 function SpeedCell({ fit: f }: { fit?: Fit }) {
   if (!f) return <span>{" ".repeat(SPEED_W)}</span>;
-  const fast = f.est_tps >= 10 ? theme.success : f.est_tps >= 3 ? theme.warn : theme.error;
-  return <span fg={f.fits ? fast : theme.fg2}>{padL(tpsLabel(f), SPEED_W)}</span>;
+  // An embedding model doesn't generate: no speed to show.
+  if (f.kind === "embedding") return <span fg={theme.fg2}>{padL("embed", SPEED_W)}</span>;
+  const tps = f.est_tps ?? 0;
+  const fast = tps >= 10 ? theme.success : tps >= 3 ? theme.warn : theme.error;
+  return <span fg={f.fits ? fast : theme.fg2}>{padL(tpsLabel({ fits: f.fits, est_tps: tps, basis: f.basis ?? "" }), SPEED_W)}</span>;
 }
 
 function PlaceCell({ fit: f }: { fit?: Fit }) {
