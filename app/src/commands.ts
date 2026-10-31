@@ -50,7 +50,7 @@ export const COMMANDS: Command[] = [
   { name: "rules", args: "[remove N]", help: "List permission rules, or remove one", run: (c, arg) => rules(c, arg) },
   { name: "sessions", help: "Pick an earlier session of this folder", run: (c) => c.openSessions() },
   { name: "resume", args: "[id]", help: "Resume an earlier session", run: (c, arg) => (arg.trim() ? c.resumeSession(arg.trim()) : c.openSessions("resume")) },
-  { name: "clear", help: "New session on the same model and mode", run: (c) => c.clear() },
+  { name: "clear", help: "Start over on the same model: a new code session, or a new chat under chat and agents", run: (c) => c.clear() },
   { name: "new", help: "Same as /clear", run: (c) => c.clear() },
   { name: "context", help: "Show how much context is used", run: (c) => context(c) },
   { name: "models", help: "Models: installed, catalog, downloads, context", run: panel("models") },

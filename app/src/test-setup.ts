@@ -17,3 +17,5 @@ process.env.AIHUB_LEARN_IDLE_MS = "80";
 const home = mkdtempSync(join(tmpdir(), "aihub-code-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// homeDir() reads AIHUB_CODE_HOME first: one set in the shell would win.
+process.env.AIHUB_CODE_HOME = home;

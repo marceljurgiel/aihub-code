@@ -45,3 +45,17 @@ The harness was built in stages inside AIhub and moved here unchanged. Code comm
 - R27 keeps a pre-turn copy of every tool-written file per turn (pruned with the turn).
 - Not verified on Windows/macOS (VM off): taskkill, msvcrt locks, PowerShell rule matching, kill_all on bridge exit.
 - Interactive UI: echo permission_id in the code UI; answers without an id are still accepted.
+
+## 0.3.0: all of AIhub in the CLI
+
+User-visible decisions of the 0.3.0 release, in the same style.
+
+- Ruling R36: the theme and accent are aihub-code's own (`~/.aihub/aihub-code-settings.json`); AIhub's `config.yaml` is only read, as a fallback, never written for looks — cost if wrong: a user who wants one theme for both sets it twice.
+- Ruling R37: no Update-Ollama panel; a newer Ollama is a note at start with the update command — the user is already in a terminal — cost if wrong: one panel to port.
+- Ruling R38: Ctrl+C in a panel does what Esc does (closes it or steps back) — never quits from inside a window — cost if wrong: a user expecting Ctrl+C to quit presses it again on the prompt.
+- Ruling R39: closing a panel replays the transcript, which clears the terminal's scrollback from before aihub-code started — the only way to remove the panel rows cleanly — cost if wrong: earlier shell output above the session is gone after the first panel.
+- Ruling R40: no `/cd`: a code session belongs to the folder it was started in — cost if wrong: start aihub-code again in the other folder.
+- Ruling R41: `/new` is `/clear`, and both start a fresh screen (header, and one dim line with the old session's resume command) — cost if wrong: none (the old session stays resumable).
+- Ruling R42: `/websearch` is AIhub's one-shot search check (search.check), not a search tool for the model — cost if wrong: one command to add.
+- Ruling R43: scheduled tasks run only while aihub-code is open, as in AIhub; one model request at a time (a task never starts next to a turn, a memory learn or a session coming up) — cost if wrong: a task due while closed is asked about at the next start.
+- Ruling R44: bare `/model` opens the Models panel (spec §4); the footer picker is only for start-up and session picking — cost if wrong: none (`/model <name>` still switches directly).

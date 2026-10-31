@@ -26,7 +26,7 @@ Fixed: add() subtracted instead of adding.
 ╭──────────────────────────────────────────────╮
 │ >                                            │
 ╰──────────────────────────────────────────────╯
- build · gemma4:cloud · ctx 12% · shift+tab mode · /help
+ gemma4:cloud · cloud · build · ctx 12% · shift+tab mode · /help
 ```
 
 It is built on the engine of [AIhub](https://github.com/marceljurgiel/AIhub-TUI)
@@ -198,14 +198,18 @@ To send text that starts with `/`, start it with `//`.
 | `chat` | AIhub's plain chat, saved in AIhub's history |
 | a profile name | one of AIhub's agent profiles, with its own tools and permissions |
 
-`/agent` alone opens a picker. Switching starts a new conversation and prints
-the resume line of the old one. Shift+Tab cycles the modes under `code`, and
+`/agent` alone opens a picker. Switching between `code` and the others
+starts a new conversation and prints the resume line of the code session;
+`chat` and the agent profiles share one AIhub conversation, so switching
+between them carries it on. Shift+Tab cycles the modes under `code`, and
 build and plan under a profile that has them. In every kind you have memory
 (and it learns new facts after a reply), skills, knowledge bases (`/kb`), MCP
 connections (`/mcp`, switched on mid-session), temperature, the per-model
-context size and images: type or paste an image path to attach it to the next
-message. The status line shows the model and where it runs (GPU, CPU, cloud),
-the kind and mode, context used, `kb:<name>`, `mcp:on` and a running task.
+context size and images: type or paste an image path, or press Ctrl+V with an
+image in the clipboard, to attach it to the next message. The status line
+shows, in this order, the model and where it runs (GPU, CPU, cloud), the kind
+and mode, context used, `kb:<n>` (knowledge bases in use), `mcp:on` and a
+running task.
 
 Scheduled tasks run in the background while aihub-code is open, and only
 then. The shortest interval is 5 minutes, as in AIhub. A task's result is
@@ -226,6 +230,8 @@ panel, since you are already in a terminal.
 | Ctrl+C | interrupt; otherwise clear the prompt; press twice on an empty prompt to exit |
 | Ctrl+D | exit (on an empty prompt) |
 | Ctrl+P | palette of all commands |
+| Ctrl+V | attach the image in the clipboard |
+| Backspace | on an empty prompt, removes the last attached image |
 
 Shift+Enter needs a terminal that supports the kitty keyboard protocol
 (kitty, WezTerm, Ghostty, recent iTerm2 and others). In other terminals it

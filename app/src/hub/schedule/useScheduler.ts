@@ -9,7 +9,7 @@ import type { MissedTask } from "./types.ts";
 export const schedulerTiming = { checkMs: 30_000 };
 
 /**
- * The clock for scheduled tasks — they run only while AIhub is open. On start
+ * The clock for scheduled tasks — they run only while aihub-code is open. On start
  * it asks about slots missed while closed (one prompt per task), then checks
  * every 30 s and runs what is due, one at a time and never next to a chat turn.
  *

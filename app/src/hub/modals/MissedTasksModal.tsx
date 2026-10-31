@@ -37,7 +37,7 @@ export function MissedTasksModal({
           <span fg={theme.fg0}>{`    ${fit(task.name, 24)}`}</span>
           <span fg={theme.fg2}>{fit(`  (${task.when}, due ${formatSlot(task.slot)})`, width - 32)}</span>
         </text>
-        <text fg={theme.fg2}>{"  Tasks run only while AIhub is open."}</text>
+        <text fg={theme.fg2}>{"  Tasks run only while aihub-code is open."}</text>
       </box>
     </ModalShell>
   );

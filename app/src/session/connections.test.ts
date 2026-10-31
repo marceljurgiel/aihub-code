@@ -99,7 +99,7 @@ describe("/kb under the code agent", () => {
     m.bridge.answers["kb.list"] = { bases: [] };
     await m.c.refreshKb();
     await m.run("/kb");
-    expect(m.text()).toContain("No knowledge bases yet — /knowledge (F6) makes one from your documents.");
+    expect(m.text()).toContain("No knowledge bases yet — /knowledge makes one from your documents.");
   });
 
   test("during a turn the change waits, and goes out with its note when the turn ends", async () => {

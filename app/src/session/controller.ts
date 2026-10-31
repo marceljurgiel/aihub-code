@@ -346,6 +346,11 @@ export class Controller {
   private extracting = 0;
   // The queue's "waiting for memory" note was said for this wait.
   private memoryWaitNoted = false;
+  // Counts code sessions: a code.options answer for an older one is dropped.
+  private sessionSeq = 0;
+  // Counts conversations (a new session, kind, model, /new, history load):
+  // an attach that resolves after a change is dropped.
+  private convSeq = 0;
 
   constructor(private readonly o: ControllerOptions) {
     // A bridge that dies between turns is said at once, not at the next Enter.
@@ -552,7 +557,10 @@ export class Controller {
     const { mcp, kb } = this.startArgs;
     // A /clear or /model keeps what /kb and /mcp chose (a start flag otherwise).
     const carry = this.optsTouched ? this.wantedOpts() : null;
+    // The new session starts with the waiting change: its notes say so then.
+    const notes = this.pendingOpts?.done ?? [];
     this.pendingOpts = null;
+    this.sessionSeq++;
     let info = await this.o.bridge.request("code.start", {
       cwd: this.o.cwd ?? process.cwd(),
       model,
@@ -572,9 +580,11 @@ export class Controller {
     this.turnsSent = 0;
     this.resumed = false;
     this.begin(info, model, undefined, opts);
+    for (const f of notes) f();
   }
 
   private async resume(sessionId: string): Promise<void> {
+    this.sessionSeq++;
     const info = await this.o.bridge.request("code.resume", { cwd: this.o.cwd ?? process.cwd(), session_id: sessionId });
     this.turnsSent = 0;
     this.resumed = true;
@@ -1115,10 +1125,19 @@ export class Controller {
 
   /** The one gate of "one model request at a time": a turn (or a /skill
    *  about to send one), memory learning, /memoryadd's extract, or a
-   *  scheduled task. A scheduled task and a learn wait while it holds; typed
-   *  prompts wait in the queue; /compact, /skill and /memoryadd refuse. */
+   *  scheduled task — and a session or kind switch coming up. A scheduled
+   *  task and a learn wait while it holds; typed prompts wait in the queue;
+   *  /compact, /skill and /memoryadd refuse. */
   isBusy(): boolean {
-    return this.turn !== null || this.invoking || this.memoryBusy() || this.state.taskRunning !== null;
+    return (
+      this.turn !== null ||
+      this.invoking ||
+      this.memoryBusy() ||
+      this.state.taskRunning !== null ||
+      // A session coming up, or a kind switch writing its header.
+      this.switching ||
+      this.state.phase === "starting"
+    );
   }
 
   /** Memory asks the model: a learn, or /memoryadd's extract. */
@@ -1147,6 +1166,10 @@ export class Controller {
     }
     if (this.memoryBusy()) {
       this.note("Memory is using the model \u2014 try again when it is done.");
+      return false;
+    }
+    if (this.switching || phase === "starting") {
+      this.note("wait until the session is ready");
       return false;
     }
     return true;
@@ -1291,6 +1314,10 @@ export class Controller {
       this.note("still loading the list");
       return false;
     }
+    if (this.optsBusy) {
+      this.note("wait until the /kb or /mcp change is applied");
+      return false;
+    }
     if (picker) {
       this.note("choose or cancel the picker first");
       return false;
@@ -1405,7 +1432,20 @@ export class Controller {
    *  resumable). Bare `/model` opens the Models window (commands.ts). */
   async switchModel(name: string): Promise<void> {
     if (!this.canSwitch()) return;
-    if (this.state.kind.type !== "code") return this.useModel({ name, backend: "ollama" });
+    if (this.state.kind.type !== "code") {
+      // The same check as the code agent's: a model the server lacks opens the picker.
+      this.listing = true;
+      let missing = false;
+      try {
+        missing = await this.modelMissing(name);
+        if (missing) await this.pickModel(name);
+      } finally {
+        this.listing = false;
+        if (missing) this.drainQueue();
+      }
+      if (!missing && !this.exited) await this.useModel({ name, backend: "ollama" });
+      return;
+    }
     await this.replaceSession(() => this.startSession(name, true, { mode: this.state.mode, divider: "model" }));
   }
 
@@ -1561,8 +1601,9 @@ export class Controller {
 
   // ── images ─────────────────────────────────────────────────────────────────
 
-  /** Can the model in front read images? Asked once per model. */
-  private async canSee(): Promise<boolean> {
+  /** Can the model in front read images? Asked once per model. False also
+   *  when the conversation changed meanwhile (`seq`): nothing to say then. */
+  private async canSee(seq: number): Promise<boolean> {
     const s = this.state;
     const key = `${s.backend}:${s.streamModel || s.model}`;
     let ok = this.vision.get(key);
@@ -1571,9 +1612,17 @@ export class Controller {
       ok = !!d?.vision;
       // Only a yes is kept: the engine answers no when Ollama is slow to say.
       if (ok) this.vision.set(key, true);
+      if (seq !== this.convSeq) return false;
     }
     if (!ok) this.error(`${s.model} can't see images \u2014 pick a vision model (/model), e.g. gemma4:cloud`);
     return ok;
+  }
+
+  /** An attach that arrives after the conversation changed is not added. */
+  private stale(seq: number): boolean {
+    if (seq === this.convSeq) return false;
+    if (!this.exited) this.note("The image came after the conversation changed \u2014 attach it again.");
+    return true;
   }
 
   private addImages(list: Attachment[]): void {
@@ -1588,10 +1637,12 @@ export class Controller {
    *  see, or failed) and must not be sent or pasted. False: it was not image
    *  files: the caller goes on with it as typed. */
   async attachPaths(text: string): Promise<boolean> {
+    const seq = this.convSeq;
     try {
-      if (!(await this.canSee())) return true;
+      if (!(await this.canSee(seq))) return true;
       const d = await this.o.bridge.request<{ attachments?: Attachment[] }>("attach.paste", { text });
       const got = d?.attachments ?? [];
+      if (got.length && this.stale(seq)) return true;
       if (got.length) this.addImages(got);
       return got.length > 0;
     } catch (e) {
@@ -1602,10 +1653,11 @@ export class Controller {
 
   /** Ctrl+V with an image in the clipboard. */
   async attachClipboard(): Promise<void> {
+    const seq = this.convSeq;
     try {
-      if (!(await this.canSee())) return;
+      if (!(await this.canSee(seq))) return;
       const d = await this.o.bridge.request<{ attachment?: Attachment }>("attach.clipboard");
-      if (d?.attachment) this.addImages([d.attachment]);
+      if (d?.attachment && !this.stale(seq)) this.addImages([d.attachment]);
     } catch (e) {
       this.error(`Attaching the clipboard image: ${errText(e)}`);
     }
@@ -1616,8 +1668,10 @@ export class Controller {
     this.set({ images: this.attachments.list() });
   }
 
-  /** A new conversation (clear, another model or kind): its images go. */
+  /** A new conversation (clear, another model or kind, history): its images
+   *  go, and an attach still on its way is dropped when it arrives. */
   private dropImages(): void {
+    this.convSeq++;
     if (!this.attachments.list().length) return;
     this.attachments.clear();
     this.set({ images: [] });
@@ -1645,20 +1699,37 @@ export class Controller {
 
   // ── knowledge bases and MCP ────────────────────────────────────────────────
 
-  /** The bases for `/kb` and its suggestions (AIhub's refreshKb). */
-  async refreshKb(): Promise<void> {
+  /** The bases for `/kb` and its suggestions (AIhub's refreshKb). False
+   *  when they could not be listed. */
+  async refreshKb(): Promise<boolean> {
     try {
       const d = await this.o.bridge.request<{ bases?: { name: string; description?: string }[] }>("kb.list", {});
       this.kbList = (Array.isArray(d?.bases) ? d.bases : []).map((b) => ({ name: String(b.name), description: String(b.description ?? "") }));
       this.set({ kbNames: this.kbList.map((b) => b.name) });
+      return true;
     } catch (e) {
       if (!this.exited && !this.o.bridge.deadError()) this.error(`Listing knowledge bases failed: ${errText(e)}`);
+      return false;
     }
   }
 
-  /** The knowledge window closed: it may have made, changed or deleted bases. */
-  knowledgeClosed(): void {
-    void this.refreshKb();
+  /** The knowledge window closed: it may have made, changed or deleted bases.
+   *  A deleted one leaves this conversation's list (and the code session's). */
+  async knowledgeClosed(): Promise<void> {
+    if (!(await this.refreshKb()) || this.exited) return;
+    const have = (names: string[]) => names.filter((n) => this.kbList.some((b) => b.name === n));
+    const hub = this.state.kind.type === "code" ? null : this.hub;
+    if (hub) {
+      const kept = have(hub.knowledge);
+      if (kept.length !== hub.knowledge.length) {
+        hub.knowledge = kept;
+        this.set({ knowledge: [...kept] });
+      }
+    }
+    if (!this.state.sessionId) return;
+    const code = this.wantedOpts().knowledge;
+    const kept = have(code);
+    if (kept.length !== code.length) this.codeOptions({ knowledge: kept });
   }
 
   /** The connections window closed. Under the code agent its MCP follows the
@@ -1702,8 +1773,11 @@ export class Controller {
       while (this.pendingOpts && this.canFlushOptions()) {
         const { done, ...change } = this.pendingOpts;
         this.pendingOpts = null;
+        const seq = this.sessionSeq;
         try {
           const r = await this.o.bridge.request<{ mcp?: boolean; knowledge?: string[] }>("code.options", change);
+          // A newer session has its own options (and this change never reached it).
+          if (seq !== this.sessionSeq) continue;
           this.codeOpts = {
             mcp: typeof r?.mcp === "boolean" ? r.mcp : (change.mcp ?? this.codeOpts.mcp),
             knowledge: Array.isArray(r?.knowledge) ? r.knowledge.map(String) : (change.knowledge ?? this.codeOpts.knowledge),
@@ -1744,7 +1818,7 @@ export class Controller {
       }
     };
     if (!arg) {
-      if (!this.kbList.length) return this.note("No knowledge bases yet \u2014 /knowledge (F6) makes one from your documents.");
+      if (!this.kbList.length) return this.note("No knowledge bases yet \u2014 /knowledge makes one from your documents.");
       return this.note(
         "Knowledge bases: " +
           this.kbList.map((b) => `${on.includes(b.name) ? "\u2713 " : ""}${b.name}${b.description ? ` (${b.description})` : ""}`).join(" \u00b7 ") +
@@ -1783,6 +1857,7 @@ export class Controller {
       if (k.type === "agent") {
         const { model, streamModel, backend } = this.state;
         check = (await this.o.bridge.request<AgentCheck>("agent.check", { model: streamModel || model, backend, agent: k.name })) ?? {};
+        if (this.exited) return;
         if (!check.ok) {
           this.error(`Agent unavailable: ${check.reason ?? "unknown reason"}`);
           return;
@@ -1793,12 +1868,13 @@ export class Controller {
       if (turn) {
         this.cancel(); // writes "interrupted" and drops what was queued behind it
         await turn.handle?.done.then(noop, noop);
-        if (this.o.bridge.deadError()) return; // onFail has said it
+        if (this.exited || this.o.bridge.deadError()) return; // onFail has said it
         this.set({ phase: "starting" });
       } else {
         this.dropQueued();
         if (this.state.phase === "idle") this.set({ phase: "starting" });
       }
+      if (this.exited) return;
       if (cur.type === "code") this.leaveCode();
       if (k.type === "code") await this.enterCode();
       else if (cur.type !== "code" && this.hub) await this.changeHubKind(k, check);
@@ -1822,6 +1898,7 @@ export class Controller {
       const limit = cur.type === "code" ? await this.chatContext(m) : this.state.ctx.limit;
       // Old messages were already there to learn from; only new ones count.
       this.learner.reset(messages.filter((x) => x.role === "user").length);
+      this.dropImages();
       this.hub = hub;
       this.set({ kind: k, ctx: { used: 0, limit }, knowledge: [] });
       this.write(fmtDivider(kindHeader(k, this.state.mode, m.model), this.o.width()));
@@ -1879,6 +1956,7 @@ export class Controller {
     // An interrupted chat turn was not saved yet: the conversation ends here.
     const old = this.hub;
     if (old?.unsaved) await old.finalize(true).catch((e) => this.error(`Saving the chat failed: ${errText(e)}`));
+    if (this.exited) return;
     const snap = this.codeSnap;
     const m = this.current();
     if (snap && snap.model === m.model && snap.backend === m.backend && (snap.streamModel || snap.model) === m.streamModel) {
@@ -1904,10 +1982,12 @@ export class Controller {
   ): Promise<void> {
     const hub = new HubChat(this.o.bridge, m);
     await hub.start();
+    if (this.exited) return;
     hub.kind = k;
     let limit = this.state.ctx.limit;
     if (k.type === "chat") limit = await this.chatContext(m);
     else if (Number(o.check?.context) > 0) limit = Number(o.check!.context);
+    if (this.exited) return;
     this.learner.reset();
     this.dropImages();
     this.hub = hub;
@@ -1932,6 +2012,7 @@ export class Controller {
     } else {
       limit = this.chatCtx ?? (await this.chatContext(this.current()));
       this.chatCtx = null;
+      if (this.exited) return;
     }
     this.hub!.kind = k;
     this.set({ kind: k, ctx: { ...this.state.ctx, limit } });

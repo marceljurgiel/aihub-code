@@ -19,4 +19,8 @@ describe("tests never touch the real ~/.aihub", () => {
     expect(configPath().startsWith(real)).toBe(false);
     expect(bridgeErrLogPath({ ...process.env, AIHUB_CODE_ERR_LOG: undefined }).startsWith(real)).toBe(false);
   });
+  test("the preload points AIHUB_CODE_HOME (read first) at the temp home too", () => {
+    expect(process.env.AIHUB_CODE_HOME).toBe(process.env.HOME);
+    expect(String(process.env.AIHUB_CODE_HOME).startsWith(real)).toBe(false);
+  });
 });

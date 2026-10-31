@@ -140,7 +140,7 @@ test("opens Schedule with tasks, the last result and the only-while-open note", 
   expect(f).toMatch(/\[✓\] mail-digest\s+daily 08:00/);
   expect(f).toContain("ok ·");
   expect(f).toContain("Three new emails: the Lisbon trip is confirmed.");
-  expect(f).toContain("Tasks run only while AIhub is open.");
+  expect(f).toContain("Tasks run only while aihub-code is open.");
 });
 
 test("an 80-column terminal: the hint bar stays one line, every key in it", async () => {
@@ -211,7 +211,7 @@ test("n creates a task with the current model; an engine error keeps the form op
   await until((f) => f.includes("unknown schedule 'tomorrow'"));
   expect(setup!.captureCharFrame()).toContain("What should mail do?");   // still in the form
   setup!.mockInput.pressKey("s", { ctrl: true });                        // second save succeeds
-  await until((f) => f.includes("weekly-report") && f.includes("Tasks run only while AIhub is open."));
+  await until((f) => f.includes("weekly-report") && f.includes("Tasks run only while aihub-code is open."));
   const saves = bridge.calls.filter(([m]) => m === "schedule.save").map(([, p]) => p);
   expect(saves[1].task).toMatchObject({
     name: "weekly-report", agent: "mail", when: "tomorrow", prompt: "Summarize the week for alex.",
@@ -234,7 +234,7 @@ test("e edits the selected task and keeps its name as original_name", async () =
   await until((f) => f.includes("What should mail do?"));
   await settle();
   setup!.mockInput.pressKey("s", { ctrl: true });
-  await until((f) => f.includes("Tasks run only while AIhub is open."));
+  await until((f) => f.includes("Tasks run only while aihub-code is open."));
   const save = bridge.calls.find(([m]) => m === "schedule.save")![1];
   expect(save.original_name).toBe("mail-digest");
   expect(save.task).toMatchObject({ name: "mail-digest", agent: "mail", when: "daily 08:00",

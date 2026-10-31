@@ -70,6 +70,7 @@ async function running() {
 }
 
 const WAIT = "wait for the current turn to finish";
+const CLEAR_HELP = "Start over on the same model: a new code session, or a new chat under chat and agents";
 
 describe("routing", () => {
   test("slash input goes to the command table, not to the model", async () => {
@@ -267,6 +268,8 @@ describe("/help", () => {
     expect(out).toContain("shift+tab");
     expect(out).toContain("Shift+Enter needs a terminal with the kitty keyboard protocol; Ctrl+J always adds a line");
     expect(out).toContain("To send text that begins with /, start it with //.");
+    // /clear under every kind, not only the code agent's session.
+    expect(out).toContain(`/clear ${CLEAR_HELP}`);
   });
 
   test("on a narrow terminal nothing is wider than the screen", async () => {
@@ -988,8 +991,8 @@ describe("AIhub's slash list (shown in its windows)", () => {
 
   test("/new, /clear and /history are described as aihub-code does them", () => {
     const desc = (cmd: string) => HUB_SLASH.find((c) => c.cmd === cmd)!.desc;
-    expect(desc("/new")).toBe("New session on the same model and mode");
-    expect(desc("/clear")).toBe("New session on the same model and mode");
+    expect(desc("/new")).toBe(CLEAR_HELP);
+    expect(desc("/clear")).toBe(CLEAR_HELP);
     expect(desc("/history")).toContain("saved conversations");
     expect(desc("/clear")).not.toContain("keep system");
   });

@@ -10,12 +10,13 @@ All of AIhub in the CLI.
   `/history`, `/settings`, `/theme`, `/temp`. Esc closes a panel and the
   conversation is shown again. Ctrl+P opens a palette of all commands.
 - `/agent [code|chat|name]`: talk to the code agent (default), to AIhub's
-  plain chat or to one of its agent profiles. Switching starts a new
-  conversation.
+  plain chat or to one of its agent profiles. Switching to or from the code
+  agent starts a new conversation; chat and the profiles share one.
 - Memory that learns new facts after a reply, `/memoryadd`, skills
   (`/skill <name> [task]`), knowledge bases (`/kb`) and MCP connections
   switched on mid-session, in every kind.
-- Images: type or paste an image path to attach it.
+- Images: type or paste an image path, or paste an image from the clipboard
+  (Ctrl+V), to attach it.
 - Scheduled tasks run in the background; their results are printed into the
   scrollback, and a missed run asks first.
 - A status line with the model and where it runs, the kind and mode, context

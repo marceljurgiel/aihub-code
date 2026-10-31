@@ -33,7 +33,7 @@ interface Draft {
 }
 
 const VIEWPORT = 8;
-export const ONLY_WHILE_OPEN = "Tasks run only while AIhub is open.";
+export const ONLY_WHILE_OPEN = "Tasks run only while aihub-code is open.";
 const WHEN_HINT = "every 30m · daily 08:00 · weekdays 08:00 · weekly Mon 08:00 · once 2026-10-08 10:00";
 
 const statusText = (t: ScheduledTask) =>
@@ -45,7 +45,7 @@ const statusText = (t: ScheduledTask) =>
 
 /**
  * Scheduled tasks: an agent runs a prompt on a timetable (every 30m, daily
- * 08:00, …) — only while AIhub is open; the chat's clock starts them. Each
+ * 08:00, …) — only while aihub-code is open; the chat's clock starts them. Each
  * run is saved to History; Enter opens the last one.
  */
 export function ScheduleModal({

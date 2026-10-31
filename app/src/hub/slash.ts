@@ -10,7 +10,7 @@ export interface SlashCommand {
  *  commands or the palette). /new, /clear and /history say what they do here:
  *  a new session (the old one stays resumable), and AIhub's saved chats. */
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { cmd: "/new", desc: "New session on the same model and mode" },
+  { cmd: "/new", desc: "Start over on the same model: a new code session, or a new chat under chat and agents" },
   { cmd: "/help", desc: "Show help & key bindings" },
   { cmd: "/model", desc: "Switch model" },
   { cmd: "/memory", desc: "Show saved memory" },
@@ -28,7 +28,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: "/schedule", desc: "Scheduled tasks: agents on a timetable" },
   { cmd: "/schedule run", desc: "Run a scheduled task now → /schedule run <name>" },
   { cmd: "/tools", desc: "List available agentic tools" },
-  { cmd: "/clear", desc: "New session on the same model and mode" },
+  { cmd: "/clear", desc: "Start over on the same model: a new code session, or a new chat under chat and agents" },
   { cmd: "/websearch", desc: "Test web search → /websearch <query>" },
   { cmd: "/temp", desc: "Temperature → /temp 0.3 (or pick)" },
 ];

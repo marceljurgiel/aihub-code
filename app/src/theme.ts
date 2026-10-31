@@ -3,7 +3,9 @@
  * background, so it looks right on any terminal theme; only a few semantic
  * colours are fixed. green / red / yellow are slots of the terminal's 16-colour
  * palette ("ansi:N"), which the user's terminal theme already tunes; the
- * accent is AIhub's (a hex), read once from ~/.aihub/config.yaml.
+ * accent (one of AIhub's hexes) comes from aihub-code's own settings,
+ * ~/.aihub/aihub-code-settings.json, with AIhub's ~/.aihub/config.yaml as a
+ * read-only fallback (aihub-code never writes it).
  */
 import { readFileSync } from "node:fs";
 import { homeDir } from "./home";
