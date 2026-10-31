@@ -37,6 +37,7 @@ async function started() {
   bridge.answers["agent.check"] = { ok: true, context: 16384, context_note: "", agent: { name: "reviewer", tools: ["read_file"], permission: "ask", model: "" } };
   const sink = memorySink();
   const resumed: unknown[][] = [];
+  const exits: number[] = [];
   const c = new Controller({
     bridge,
     sink,
@@ -46,6 +47,8 @@ async function started() {
     cwd: "/home/alex/proj",
     home: "/home/alex",
     onResume: (m) => resumed.push(m),
+    onExit: () => exits.push(1),
+    exitGraceMs: 200,
   });
   await c.start(ARGS);
   const text = () => sink.lines.join("\n");
@@ -61,7 +64,7 @@ async function started() {
     c.submit(line);
     await settle();
   };
-  return { bridge, sink, c, text, count, codeTurn, resumed, run };
+  return { bridge, sink, c, text, count, codeTurn, resumed, run, exits };
 }
 
 describe("/agent chat", () => {
@@ -368,6 +371,77 @@ describe("finalize", () => {
     m.bridge.lastStream.finish({ messages: [...done, { role: "user", content: "more" }, { role: "assistant", content: "ok" }] });
     await settle();
     expect(m.bridge.to("chat.finalize")).toHaveLength(2);
+  });
+
+  const PARTIAL = [SYS, { role: "user", content: "hi" }, { role: "assistant", content: "hel" }];
+
+  test("exit after an interrupted chat turn saves the chat (AIhub's quit), then leaves", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    await m.run("hi");
+    m.c.cancel();
+    m.bridge.lastStream.finish({ messages: PARTIAL, cancelled: true });
+    await settle();
+    expect(m.bridge.to("chat.finalize")).toHaveLength(0);
+    m.c.exit();
+    await settle();
+    const f = m.bridge.to("chat.finalize");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.params).toMatchObject({ messages: PARTIAL, auto: true });
+    expect(m.exits).toEqual([1]);
+  });
+
+  test("exit during a chat turn interrupts it, then saves the chat once it has ended", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    await m.run("hi");
+    m.c.exit();
+    await settle();
+    expect(m.exits).toEqual([]);
+    m.bridge.lastStream.finish({ messages: PARTIAL, cancelled: true });
+    await settle();
+    expect(m.bridge.to("chat.finalize")).toHaveLength(1);
+    expect(m.bridge.to("chat.finalize")[0]!.params.messages).toEqual(PARTIAL);
+    expect(m.exits).toEqual([1]);
+  });
+
+  test("exit does not wait forever for a save that hangs", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    await m.run("hi");
+    m.c.cancel();
+    m.bridge.lastStream.finish({ messages: PARTIAL, cancelled: true });
+    await settle();
+    m.bridge.answers["chat.finalize"] = () => new Promise(() => {});
+    m.c.exit();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(m.exits).toEqual([1]);
+  });
+
+  test("exit after a finished chat turn saves nothing more (autosave did)", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    await m.run("hi");
+    m.bridge.lastStream.finish({ messages: [...PARTIAL.slice(0, 2), { role: "assistant", content: "hello" }] });
+    await settle();
+    m.c.exit();
+    await settle();
+    expect(m.bridge.to("chat.finalize")).toHaveLength(1);
+    expect(m.exits).toEqual([1]);
+  });
+
+  test("/agent code after a cancelled chat turn saves the chat", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    await m.run("hi");
+    m.c.cancel();
+    m.bridge.lastStream.finish({ messages: PARTIAL, cancelled: true });
+    await settle();
+    await m.run("/agent code");
+    expect(m.c.getState().kind).toEqual({ type: "code" });
+    const f = m.bridge.to("chat.finalize");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.params.messages).toEqual(PARTIAL);
   });
 
   test("a failed save says so; the chat goes on", async () => {

@@ -42,6 +42,10 @@ export class HubChat {
   toolsEnabled = true;
   /** Knowledge bases switched on for this chat (/kb). */
   knowledge: string[] = [];
+  /** An interrupted turn changed the conversation since the last save (a
+   *  finished turn is saved at once): quitting or going back to the code
+   *  agent saves it, as AIhub's quit does. */
+  unsaved = false;
   readonly model: string;
   readonly backend: Backend;
   readonly streamModel: string;
@@ -91,6 +95,7 @@ export class HubChat {
 
   /** Save to AIhub's history. `auto` honours the autosave setting. */
   finalize(auto: boolean): Promise<unknown> {
+    this.unsaved = false;
     return this.bridge.request("chat.finalize", {
       model: this.model,
       messages: this.messages,

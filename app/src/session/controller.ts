@@ -921,7 +921,11 @@ export class Controller {
   private hubTurnDone(hub: HubChat, data: any, cancelled: boolean): void {
     hub.accept(data?.messages);
     if (hub !== this.hub) return;
-    if (cancelled) return this.learner.remember(hub.messages, hub.model, hub.startTime);
+    if (cancelled) {
+      // Not saved now (AIhub saves after a reply), but on quit or /agent code.
+      if (hub.hasUserMessages()) hub.unsaved = true;
+      return this.learner.remember(hub.messages, hub.model, hub.startTime);
+    }
     hub.finalize(true).catch((e) => {
       if (!this.exited) this.error(`Saving the chat failed: ${errText(e)}`);
     });
@@ -1902,6 +1906,9 @@ export class Controller {
   }
 
   private async enterCode(): Promise<void> {
+    // An interrupted chat turn was not saved yet: the conversation ends here.
+    const old = this.hub;
+    if (old?.unsaved) await old.finalize(true).catch((e) => this.error(`Saving the chat failed: ${errText(e)}`));
     const snap = this.codeSnap;
     const m = this.current();
     if (snap && snap.model === m.model && snap.backend === m.backend && (snap.streamModel || snap.model) === m.streamModel) {
@@ -1978,7 +1985,9 @@ export class Controller {
 
   /** Leave. A running turn is interrupted first, and its end awaited for a
    *  moment: the engine saves the session then, so --resume has the last
-   *  prompt. A dead bridge rejects at once; a stuck one is not waited for. */
+   *  prompt; an AIhub chat whose last turn was interrupted is saved to
+   *  history then (AIhub's quit). A dead bridge rejects at once; a stuck one
+   *  is not waited for. */
   exit(): void {
     if (this.exited) return;
     this.exited = true;
@@ -1988,7 +1997,7 @@ export class Controller {
     const taskRunning = this.scheduler?.isRunning() ?? null;
     const taskStop = this.scheduler?.stop() ?? null;
     const turn = this.turn;
-    if (!turn?.handle && !this.pendingOpts && !taskRunning) return this.o.onExit?.();
+    if (!turn?.handle && !this.pendingOpts && !taskRunning && !this.hub?.unsaved) return this.o.onExit?.();
     if (turn?.handle) this.cancel();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const grace = new Promise<void>((r) => (timer = setTimeout(r, this.o.exitGraceMs ?? 1500)));
@@ -1997,6 +2006,9 @@ export class Controller {
       if (turn?.handle) ends.push(turn.handle.done.then(noop, noop));
       if (taskRunning && taskStop) ends.push(taskStop);
       if (ends.length) await Promise.race([Promise.all(ends), grace]);
+      // The interrupted turn's conversation (now, or an earlier Esc) goes to history.
+      const hub = this.hub;
+      if (hub?.unsaved && !this.o.bridge.deadError()) await Promise.race([hub.finalize(true).catch(noop), grace]);
       // A /kb or /mcp change still waiting is applied (and saved) before leaving.
       if (this.pendingOpts) {
         if (this.canFlushOptions()) await Promise.race([this.flushOptions(), grace]);
