@@ -658,6 +658,24 @@ describe("mode", () => {
     expect(sink.lines.at(-1)).toBe("mode: plan");
   });
 
+  test("Shift+Tab many times leaves no trail of mode lines in the transcript", async () => {
+    const { c, sink } = await started();
+    const before = sink.lines.length;
+    for (let i = 0; i < 7; i++) {
+      c.cycleMode();
+      await settle();
+    }
+    expect(c.getState().mode).toBe("auto");
+    expect(sink.lines.slice(before)).toEqual([]);
+  });
+
+  test("/mode plan still says it once the engine has it", async () => {
+    const { c, sink } = await started();
+    c.mode("plan");
+    await settle();
+    expect(sink.lines.at(-1)).toBe("mode: plan");
+  });
+
   test("cycleMode: build → auto → plan → build", async () => {
     const { c } = await started();
     const seen: string[] = [];
@@ -677,7 +695,8 @@ describe("mode", () => {
     expect(c.getState().mode).toBe("build");
     await settle();
     expect(bridge.to("code.mode").map((x) => x.params.mode)).toEqual(["auto", "build"]);
-    expect(sink.lines.filter((l) => l.startsWith("mode:"))).toEqual(["mode: build"]);
+    // Shift+Tab says nothing in the transcript: the status line shows the mode.
+    expect(sink.lines.filter((l) => l.startsWith("mode:"))).toEqual([]);
     expect(c.getState().mode).toBe("build");
   });
 
@@ -813,7 +832,7 @@ describe("fix round 1", () => {
     let release!: () => void;
     bridge.answers["code.mode"] = (p: Record<string, unknown>) =>
       new Promise((res) => (release = () => res({ mode: p.mode }))) as unknown;
-    c.cycleMode();
+    c.mode("auto"); // /mode auto: it says so, before the prompt that waited
     await settle();
     c.submit("go ahead");
     await settle();

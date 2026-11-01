@@ -308,6 +308,7 @@ export class Controller {
   private modeConfirmed: Mode = "build";
   private modeWanted: Mode | null = null;
   private modeBusy = false;
+  private modeAnnounce = true;
   // An undo is in flight (preview or confirm): no turn may start meanwhile.
   private undoBusy = false;
   // A picker's list is being fetched (/sessions): same.
@@ -1068,7 +1069,9 @@ export class Controller {
 
   // ── mode ───────────────────────────────────────────────────────────────────
 
-  /** Shift+Tab: the code agent's modes; an AIhub agent's build/plan; nothing in chat. */
+  /** Shift+Tab: the code agent's modes; an AIhub agent's build/plan; nothing in chat.
+   *  Silent: the status line shows the mode, and every press would otherwise
+   *  leave a line in the scrollback for good. */
   cycleMode(): void {
     const k = this.state.kind;
     if (k.type === "chat") return;
@@ -1076,13 +1079,13 @@ export class Controller {
       const next: Kind = { ...k, submode: k.submode === "plan" ? "build" : "plan" };
       if (this.hub) this.hub.kind = next;
       this.set({ kind: next });
-      this.note(kindLabel(next, this.state.mode));
       return;
     }
-    this.setMode(MODES[(MODES.indexOf(this.state.mode) + 1) % MODES.length]!);
+    this.setMode(MODES[(MODES.indexOf(this.state.mode) + 1) % MODES.length]!, false);
   }
 
-  setMode(mode: Mode): void {
+  /** `announce`: say "mode: x" once the engine has it (/mode does; Shift+Tab doesn't). */
+  setMode(mode: Mode, announce = true): void {
     if (!this.state.sessionId || mode === this.state.mode) return;
     // code.mode would race code.start / code.undo for the engine's session.
     const wait = this.turn
@@ -1100,6 +1103,7 @@ export class Controller {
     }
     this.set({ mode });
     this.modeWanted = mode;
+    this.modeAnnounce = announce; // the latest request decides
     if (!this.modeBusy) void this.syncMode();
   }
 
@@ -1116,7 +1120,7 @@ export class Controller {
           // Nothing newer to send (or the user came back to this very mode).
           if (this.modeWanted === null || this.modeWanted === this.modeConfirmed) {
             this.modeWanted = null;
-            this.note(`mode: ${this.modeConfirmed}`);
+            if (this.modeAnnounce) this.note(`mode: ${this.modeConfirmed}`);
             this.set({ mode: this.modeConfirmed });
           }
         } catch (e) {
