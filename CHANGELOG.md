@@ -21,6 +21,9 @@ All of AIhub in the CLI.
   scrollback, and a missed run asks first.
 - A status line with the model and where it runs, the kind and mode, context
   used, `kb:<name>`, `mcp:on` and a running task.
+- A theme other than "terminal" colours the whole terminal (background and
+  text) while aihub-code runs, not only the text; closing puts the
+  terminal's own colours back.
 - `/tools`, `/websearch` (AIhub's one-shot search check), `/temp`, and `/new`
   as an alias of `/clear`.
 - An "AIhub CODE" logo with a gradient at start-up, a one-sentence "Did

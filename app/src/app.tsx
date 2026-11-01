@@ -10,6 +10,7 @@
 import type { TrustStore } from "./session/trust";
 import { fmtLogo } from "./transcript/logo";
 import { pickTip } from "./tips";
+import { followTheme } from "./terminalColours";
 import type { CliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { constants } from "node:os";
@@ -59,6 +60,16 @@ export interface LaunchOptions {
   trust?: TrustStore;
   /** The "Did you know?" tip (default: a random one; null: none). */
   tip?: string | null;
+  /** Where the terminal's colour sequences go (default: the renderer's own
+   *  terminal output, which bypasses the captured stdout). */
+  terminalWrite?: (seq: string) => void;
+}
+
+/** The renderer's raw terminal write (private in OpenTUI's types; it goes to
+ *  the real stdout, before and after destroy). */
+function rawWrite(renderer: CliRenderer): (seq: string) => void {
+  const r = renderer as unknown as { writeOut?: (s: string) => unknown };
+  return (seq) => void (typeof r.writeOut === "function" ? r.writeOut.call(renderer, seq) : process.stdout.write(seq));
 }
 
 /** OpenTUI's own exit signals: its handler only destroys the renderer (and a
@@ -136,6 +147,8 @@ export function launch(o: LaunchOptions): Launched {
   const closed = new Promise<void>((r) => (resolveClosed = r));
   let done = false;
   const prompts = new HistoryStore();
+  // The theme's background and text colour for the whole terminal while we run.
+  const colours = followTheme(o.terminalWrite ?? rawWrite(renderer));
   // One "Did you know?" per start, picked for the width the app starts at.
   const tip = o.tip !== undefined ? o.tip : pickTip(renderer.width);
 
@@ -208,6 +221,7 @@ export function launch(o: LaunchOptions): Launched {
     replay.cancel();
     const line = exitLine(controller.resumableSessionId());
     for (const [name, h] of handlers) proc.off(name, h);
+    colours.restore(); // the terminal's own colours back, before it is handed over
     try {
       // Core's own signal handler may have destroyed the renderer already.
       if (!renderer.isDestroyed) {

@@ -72,6 +72,22 @@ async function run(o: { width?: number; height?: number; args?: Partial<Args>; a
 }
 
 describe("the app on a split-footer renderer", () => {
+  test("a theme with colours colours the terminal while it runs, and closing puts it back", async () => {
+    const { applyTheme } = await import("./hub/theme");
+    applyTheme("nord");
+    const seqs: string[] = [];
+    try {
+      const t = await run({ launch: { terminalWrite: (s) => void seqs.push(s) } });
+      expect(seqs).toHaveLength(1);
+      expect(seqs[0]).toContain("\x1b]11;rgb:");
+      t.app.shutdown();
+      await t.app.closed;
+      expect(seqs.at(-1)).toBe("\x1b]111\x07\x1b]110\x07");
+    } finally {
+      applyTheme("terminal");
+    }
+  });
+
   test("start: AIhub's logo comes first, then the header", async () => {
     const t = await run();
     const rows = await t.scrolled();

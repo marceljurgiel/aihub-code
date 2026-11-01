@@ -36,7 +36,10 @@ history, each as a panel above the prompt. It reads and writes the same
 `~/.aihub` as AIhub: the Ollama server, your models, agents, memory, MCP
 servers, knowledge bases, scheduled tasks and per-model context sizes. The
 theme and accent are aihub-code's own (`~/.aihub/aihub-code-settings.json`),
-so changing them here does not change AIhub. aihub-code installs AIhub's
+so changing them here does not change AIhub. A theme other than
+"terminal" sets the terminal's own background and text colour while
+aihub-code runs (OSC 11/10; terminals that don't support it keep theirs)
+and puts them back when it closes. aihub-code installs AIhub's
 released engine as a dependency and never modifies it.
 
 > **Status: early (0.3.0).** Developed and tried on Linux. The Windows and
