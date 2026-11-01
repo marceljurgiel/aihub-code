@@ -23,7 +23,9 @@ All of AIhub in the CLI.
   used, `kb:<name>`, `mcp:on` and a running task.
 - `/tools`, `/websearch` (AIhub's one-shot search check), `/temp`, and `/new`
   as an alias of `/clear`.
-- AIhub's logo at start-up, and "Do you trust the files in this folder?"
+- An "AIhub CODE" logo with a gradient at start-up, a one-sentence "Did
+  you know?" tip about AIhub or agentic AI that types itself out above the
+  prompt (gone after the first prompt), and "Do you trust the files in this folder?"
   the first time aihub-code starts in a folder (as Claude Code asks): yes is
   remembered for the folder and the ones under it, no leaves. `-p` doesn't
   ask.

@@ -98,6 +98,8 @@ export interface MountOptions {
   wrap?: (footer: ReactNode, bridge: MockBridge) => ReactNode;
   /** The trusted folders; given, the start isn't awaited (it may wait on the question). */
   trust?: TrustStore;
+  tip?: string | null;
+  tipTypeMs?: number;
 }
 
 export async function mount(o: MountOptions = {}): Promise<Mounted> {
@@ -145,6 +147,8 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
       maxHeight={o.maxHeight}
       rows={o.rows}
       hasImage={o.hasImage ?? (async () => false)}
+      tip={o.tip}
+      tipTypeMs={o.tipTypeMs}
     />
   );
   const wrap =

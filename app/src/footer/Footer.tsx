@@ -28,6 +28,7 @@ import { PanelHost } from "../panels/PanelHost";
 import { ActivityLine } from "./ActivityLine";
 import { CONFIRM_ROWS, ConfirmPrompt } from "./ConfirmPrompt";
 import { TRUST_ROWS, TrustPrompt } from "./TrustPrompt";
+import { TipLine } from "./TipLine";
 import { PermissionPrompt, permissionLayout } from "./PermissionPrompt";
 import { Picker, pickerInnerRows } from "./Picker";
 import { MAX_INPUT_ROWS, PromptBox } from "./PromptBox";
@@ -62,6 +63,10 @@ export interface FooterProps {
   ctrlCWindowMs?: number;
   /** Does the clipboard hold an image (Ctrl+V)? Injectable for tests. */
   hasImage?: () => Promise<boolean>;
+  /** "Did you know?": shown above an idle prompt until the first prompt is sent. */
+  tip?: string | null;
+  /** Milliseconds per character as the tip types itself out (tests: 0). */
+  tipTypeMs?: number;
 }
 
 const HISTORY_MAX = 200;
@@ -96,7 +101,8 @@ export function Footer(props: FooterProps) {
   const typedHere = useRef<string[]>([]); // prompts sent from this footer, kept when `history` is replaced
   const pos = useRef(-1); // -1: not walking the history
   const [, tick] = useState(0);
-  const [noting, setNoting] = useState(false); // the permission prompt's inline input is open
+  const [noting, setNoting] = useState(false);
+  const [tipGone, setTipGone] = useState(false); // the permission prompt's inline input is open
 
   // A resumed session's prompts arrive after the footer is up: they go first,
   // what was typed here since stays after them.
@@ -258,6 +264,7 @@ export function Footer(props: FooterProps) {
   const sendText = (text: string) => {
     const ta = inputRef.current;
     if (!ta) return;
+    setTipGone(true);
     const h = history.current;
     if (h[h.length - 1] !== text) {
       h.push(text);
@@ -406,6 +413,8 @@ export function Footer(props: FooterProps) {
     <box flexDirection="column" width={width} height={height} flexShrink={0}>
       {st.activity && !trusting && !asking && !picking && !confirming && !paneled ? (
         <ActivityLine activity={st.activity} now={now()} width={width} interruptible={running && !interrupted} />
+      ) : props.tip && !tipGone && prompting && st.phase === "idle" ? (
+        <TipLine tip={props.tip} width={width} typeMs={props.tipTypeMs} />
       ) : (
         <box height={1} flexShrink={0} />
       )}

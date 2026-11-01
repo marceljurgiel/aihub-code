@@ -9,6 +9,7 @@
  */
 import type { TrustStore } from "./session/trust";
 import { fmtLogo } from "./transcript/logo";
+import { pickTip } from "./tips";
 import type { CliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { constants } from "node:os";
@@ -56,6 +57,8 @@ export interface LaunchOptions {
   forceExitMs?: number;
   /** The trusted folders (index.tsx: the settings file); without one start-up asks nothing. */
   trust?: TrustStore;
+  /** The "Did you know?" tip (default: a random one; null: none). */
+  tip?: string | null;
 }
 
 /** OpenTUI's own exit signals: its handler only destroys the renderer (and a
@@ -104,7 +107,7 @@ function useTerminal(renderer: CliRenderer): { width: number; rows: number } {
   return size;
 }
 
-function FooterHost({ renderer, controller, history }: { renderer: CliRenderer; controller: Controller; history: HistoryStore }) {
+function FooterHost({ renderer, controller, history, tip }: { renderer: CliRenderer; controller: Controller; history: HistoryStore; tip: string | null }) {
   const { width, rows } = useTerminal(renderer);
   const prompts = useSyncExternalStore(history.subscribe, history.get);
   return (
@@ -120,6 +123,7 @@ function FooterHost({ renderer, controller, history }: { renderer: CliRenderer; 
       commands={SLASH_COMMANDS}
       history={prompts}
       rows={rows}
+      tip={tip}
     />
   );
 }
@@ -132,6 +136,8 @@ export function launch(o: LaunchOptions): Launched {
   const closed = new Promise<void>((r) => (resolveClosed = r));
   let done = false;
   const prompts = new HistoryStore();
+  // One "Did you know?" per start, picked for the width the app starts at.
+  const tip = o.tip !== undefined ? o.tip : pickTip(renderer.width);
 
   // A resize leaves ghost footer rows behind: wait until it settles, clear,
   // and write the whole transcript again at the new width.
@@ -223,7 +229,7 @@ export function launch(o: LaunchOptions): Launched {
   createRoot(renderer).render(
     <AppKeymapProvider>
       <BridgeProvider client={adaptBridge(bridge)}>
-        <FooterHost renderer={renderer} controller={controller} history={prompts} />
+        <FooterHost renderer={renderer} controller={controller} history={prompts} tip={tip} />
         <SchedulerHost controller={controller} />
       </BridgeProvider>
     </AppKeymapProvider>,
