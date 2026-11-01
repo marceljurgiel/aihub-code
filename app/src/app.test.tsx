@@ -72,6 +72,28 @@ async function run(o: { width?: number; height?: number; args?: Partial<Args>; a
 }
 
 describe("the app on a split-footer renderer", () => {
+  test("start: AIhub's logo comes first, then the header", async () => {
+    const t = await run();
+    const rows = await t.scrolled();
+    const logo = rows.findIndex((r) => r.includes("/  O  \\"));
+    const header = rows.findIndex((r) => r.includes("aihub-code") && r.includes("~/proj"));
+    expect(logo).toBeGreaterThanOrEqual(0);
+    expect(header).toBeGreaterThan(logo);
+  });
+
+  test("start in an untrusted folder: the logo, then the question; yes starts the session", async () => {
+    const saved: string[] = [];
+    const t = await run({ launch: { trust: { trusted: () => false, trust: (d) => void saved.push(d) } } });
+    expect(t.frame()).toContain("Do you trust the files in this folder?");
+    expect(t.bridge.to("code.start")).toEqual([]);
+    await sleep(700); // the question's quiet moment
+    t.setup.mockInput.pressEnter();
+    await t.settle();
+    expect(saved).toEqual(["/home/alex/proj"]);
+    expect(t.bridge.to("code.start")).toHaveLength(1);
+    expect(t.frame()).toContain("shift+tab mode");
+  });
+
   test("start: the header goes above the footer, the footer is the idle prompt", async () => {
     const t = await run();
     const rows = await t.scrolled();

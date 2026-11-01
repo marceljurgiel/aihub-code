@@ -288,7 +288,7 @@ export function undoSummary(plan: UndoPlan, done: boolean): string {
   return done ? "the last turn is out of the history" : "no file changes";
 }
 
-function homeRelative(root: string, home: string): string {
+export function homeRelative(root: string, home: string): string {
   if (root === home) return "~";
   for (const sep of ["/", "\\"]) if (root.startsWith(home + sep)) return "~" + root.slice(home.length);
   return root;

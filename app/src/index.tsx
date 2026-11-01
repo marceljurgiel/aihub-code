@@ -2,6 +2,7 @@ import { createCliRenderer } from "@opentui/core";
 import { IDLE_FOOTER_ROWS, launch } from "./app";
 import { parseArgs } from "./args";
 import { BridgeClient } from "./bridge/client";
+import { fileTrust } from "./session/trust";
 import { applyTheme } from "./hub/theme";
 import { applyConfigAccent, codeAccent, codeTheme, configKey } from "./theme";
 
@@ -32,6 +33,7 @@ launch({
   bridge,
   args: parseArgs(process.env),
   cwd: process.cwd(),
+  trust: fileTrust(),
   // After the terminal is restored: a plain line in the shell, not in the transcript.
   onClosed: (line) => {
     if (line) process.stdout.write(`${line}\n`);

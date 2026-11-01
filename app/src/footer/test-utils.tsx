@@ -1,4 +1,5 @@
 /** Test helpers: a started controller on a mock bridge and a footer rendered over it. */
+import type { TrustStore } from "../session/trust";
 import { testRender } from "@opentui/react/test-utils";
 import type { ReactNode } from "react";
 import type { Args } from "../args";
@@ -95,6 +96,8 @@ export interface MountOptions {
   /** Default: the providers app.tsx puts around the footer (AIhub's keymap and
    *  bridge), which an opened panel needs. */
   wrap?: (footer: ReactNode, bridge: MockBridge) => ReactNode;
+  /** The trusted folders; given, the start isn't awaited (it may wait on the question). */
+  trust?: TrustStore;
 }
 
 export async function mount(o: MountOptions = {}): Promise<Mounted> {
@@ -117,8 +120,12 @@ export async function mount(o: MountOptions = {}): Promise<Mounted> {
     home: "/home/alex",
     commands: commandTable(),
     onExit: () => exits.push("exit"),
+    trust: o.trust,
   });
-  if (o.start !== false) await c.start({ ...ARGS, ...(typeof o.start === "object" ? o.start : {}) });
+  if (o.start !== false) {
+    const started = c.start({ ...ARGS, ...(typeof o.start === "object" ? o.start : {}) });
+    if (!o.trust) await started;
+  }
   const heights: number[] = [];
   const footer = (
     <Footer

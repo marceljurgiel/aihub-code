@@ -23,6 +23,10 @@ All of AIhub in the CLI.
   used, `kb:<name>`, `mcp:on` and a running task.
 - `/tools`, `/websearch` (AIhub's one-shot search check), `/temp`, and `/new`
   as an alias of `/clear`.
+- AIhub's logo at start-up, and "Do you trust the files in this folder?"
+  the first time aihub-code starts in a folder (as Claude Code asks): yes is
+  remembered for the folder and the ones under it, no leaves. `-p` doesn't
+  ask.
 - A note at start when a newer Ollama is out.
 - The Installed tab of `/models` shows where each local model runs (GPU,
   part, CPU, ✗) and how fast (✓ = measured on your machine), and lists the

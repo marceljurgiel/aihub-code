@@ -27,6 +27,7 @@
 import type { StreamHandle } from "../bridge/client";
 import type { Args, Mode } from "../args";
 import { G } from "../glyphs";
+import { homeDir } from "../home";
 import type { Line, ScrollbackSink } from "../scrollback";
 import type { CompactionEvent, DiffEvent, TodoItem, ToolCallEvent, ToolResultEvent, UndoPlan } from "../transcript/events";
 import {
@@ -37,6 +38,7 @@ import {
   fmtDivider,
   fmtError,
   fmtHeader,
+  homeRelative,
   fmtNote,
   fmtTodos,
   fmtUndoConflicts,
@@ -55,6 +57,7 @@ import { agentNote, HubChat, type ChatMessage, type HubKind } from "./hubChat";
 import { CODE, fmtKnowledge, hubDiff, kindHeader, kindLabel, sameKind, type AgentCheck, type Kind } from "./kinds";
 import { fmtMemoryChange, Learner } from "./learn";
 import { TaskBlock } from "./taskBlock";
+import type { TrustStore } from "./trust";
 import type { MissedTask } from "../hub/schedule/types";
 
 /** What the controller needs of BridgeClient (tests pass a mock). */
@@ -73,7 +76,7 @@ export interface Bridge {
 /** Where a model runs: on the Ollama server, or behind a provider's API. */
 export type Backend = "ollama" | "api";
 
-export type Phase = "starting" | "idle" | "running" | "permission" | "picker" | "error";
+export type Phase = "starting" | "trust" | "idle" | "running" | "permission" | "picker" | "error";
 
 export interface SuggestedRule {
   tool: string;
@@ -157,6 +160,8 @@ export interface ControllerState {
   error: string | null;
   picker: PickerState | null;
   confirm: ConfirmState | null;
+  /** Start-up's "do you trust this folder?" (the folder as the header shows it). */
+  trust: { dir: string } | null;
   /** The AIhub window open in place of the prompt, or null. `viewOnly`: the
    *  models window opened while a turn ran (look, don't pick). */
   panel: { id: PanelId; arg?: string; viewOnly?: boolean } | null;
@@ -221,6 +226,10 @@ export interface ControllerOptions {
   /** How long exit() waits for an interrupted turn (or a cancelled scheduled
    *  task) to end — the engine saves the session then — before it goes anyway. */
   exitGraceMs?: number;
+  /** The folders the user trusts. Given, start-up asks about an untrusted
+   *  folder before anything of it is opened (the app passes the settings
+   *  file; without one nothing is asked). */
+  trust?: TrustStore;
 }
 
 /** `gemma4:cloud`, `gpt-oss:120b-cloud`: runs on ollama.com. */
@@ -275,6 +284,7 @@ export class Controller {
     error: null,
     picker: null,
     confirm: null,
+    trust: null,
     panel: null,
     prefill: null,
     images: [],
@@ -425,6 +435,7 @@ export class Controller {
 
   async start(args: Args): Promise<void> {
     this.startArgs = { mode: args.mode ?? "build", mcp: args.mcp, kb: args.kb, model: args.model };
+    if (!(await this.askTrust())) return this.exit();
     try {
       this.version = (await this.o.bridge.ready()).version;
     } catch (e) {
@@ -462,6 +473,34 @@ export class Controller {
     } catch (e) {
       this.failStart(e);
     }
+  }
+
+  private trustAnswer: ((yes: boolean) => void) | null = null;
+
+  /** True when the folder is trusted, or the user says so now (remembered). */
+  private async askTrust(): Promise<boolean> {
+    const store = this.o.trust;
+    const cwd = this.o.cwd ?? process.cwd();
+    if (!store || store.trusted(cwd)) return true;
+    const yes = await new Promise<boolean>((resolve) => {
+      this.trustAnswer = resolve;
+      this.set({ phase: "trust", trust: { dir: homeRelative(cwd, this.o.home ?? homeDir()) } });
+    });
+    this.set({ phase: "starting", trust: null });
+    if (!yes) return false;
+    try {
+      store.trust(cwd);
+    } catch (e) {
+      this.note(`could not remember this folder: ${errText(e)}`);
+    }
+    return true;
+  }
+
+  /** The trust question's answer (the footer's keys); later answers do nothing. */
+  answerTrust(yes: boolean): void {
+    const answer = this.trustAnswer;
+    this.trustAnswer = null;
+    answer?.(yes);
   }
 
   /** Picker answer: a model or a session to resume (at start-up, or from /model
@@ -1082,6 +1121,7 @@ export class Controller {
    *  comes meanwhile is drawn in its place until it is answered. */
   openPanel(id: PanelId, arg?: string): boolean {
     const { phase } = this.state;
+    if (phase === "trust") return false; // nothing opens before the folder is trusted
     // The clock waits for this answer (and keys would go to the other window).
     if (this.state.panel?.id === "missed" && id !== "missed") {
       this.note("Answer the missed task first (enter run now, s skip).");

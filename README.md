@@ -76,6 +76,13 @@ cd my-project
 aihub-code
 ```
 
+The first time aihub-code starts in a folder it asks whether you trust the
+files there, since the agent reads, edits and runs them and follows the
+project's instruction file. Yes is remembered for that folder and the
+folders under it (in `~/.aihub/aihub-code-settings.json`); no leaves.
+Trusting your home folder or a drive's root covers only that folder.
+`-p` runs never ask.
+
 Type a task and press Enter. Watch the tool lines scroll by; when the agent
 wants to do something your rules do not cover, it asks. Press Esc to
 interrupt a running turn. `/help` lists the commands and keys.

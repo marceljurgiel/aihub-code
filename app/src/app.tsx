@@ -7,6 +7,8 @@
  * `launch` takes the renderer and the bridge so tests can run it on a headless
  * renderer and a mock; index.tsx passes the real ones.
  */
+import type { TrustStore } from "./session/trust";
+import { fmtLogo } from "./transcript/logo";
 import type { CliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { constants } from "node:os";
@@ -52,6 +54,8 @@ export interface LaunchOptions {
   /** How long a signal's shutdown may take before forceExit (default: room
    *  for the turn's end and the bridge's cleanup, 1.5 s each). */
   forceExitMs?: number;
+  /** The trusted folders (index.tsx: the settings file); without one start-up asks nothing. */
+  trust?: TrustStore;
 }
 
 /** OpenTUI's own exit signals: its handler only destroys the renderer (and a
@@ -154,6 +158,7 @@ export function launch(o: LaunchOptions): Launched {
     cwd: o.cwd,
     home: o.home ?? homeDir(),
     commands: commandTable(),
+    trust: o.trust,
     onResume: (messages) => {
       sink.write(messagesToLines(messages, renderer.width));
       prompts.set(userPrompts(messages));
@@ -225,6 +230,8 @@ export function launch(o: LaunchOptions): Launched {
   );
   // AIhub lists the skills at start for the prompt's `/skill <name>` suggestions,
   // and asks whether a newer Ollama is out (said as a note; no panel runs it here).
+  // AIhub's wordmark first, above the trust question and the header.
+  sink.write(fmtLogo(renderer.width));
   void controller.start(o.args).then(() => {
     const up = !done && controller.getState().phase !== "error";
     return Promise.all([

@@ -27,6 +27,7 @@ import { sanitize } from "../width";
 import { PanelHost } from "../panels/PanelHost";
 import { ActivityLine } from "./ActivityLine";
 import { CONFIRM_ROWS, ConfirmPrompt } from "./ConfirmPrompt";
+import { TRUST_ROWS, TrustPrompt } from "./TrustPrompt";
 import { PermissionPrompt, permissionLayout } from "./PermissionPrompt";
 import { Picker, pickerInnerRows } from "./Picker";
 import { MAX_INPUT_ROWS, PromptBox } from "./PromptBox";
@@ -69,6 +70,7 @@ const HINTS = {
   permission: "↑↓ choose · enter confirm · esc no",
   note: "enter send · esc back",
   confirm: "y yes · n no · esc no",
+  trust: "↑↓ choose · enter confirm · esc exit",
   picker: "↑↓ choose · enter select · esc cancel",
   panel: "esc close",
 };
@@ -103,13 +105,15 @@ export function Footer(props: FooterProps) {
     pos.current = -1;
   }, [props.history]);
 
-  const asking = st.phase === "permission" && st.permission !== null;
-  const picking = st.picker !== null;
+  // Start-up's trust question comes before everything else (nothing else is up yet).
+  const trusting = st.trust !== null;
+  const asking = !trusting && st.phase === "permission" && st.permission !== null;
+  const picking = !trusting && st.picker !== null;
   // A permission prompt or a picker can't start while a panel is open
   // (openPanel refuses then); if one ever did, it comes first.
-  const paneled = st.panel !== null && !asking && !picking;
-  const confirming = st.confirm !== null && !asking && !picking && !paneled;
-  const prompting = !asking && !picking && !confirming && !paneled;
+  const paneled = !trusting && st.panel !== null && !asking && !picking;
+  const confirming = !trusting && st.confirm !== null && !asking && !picking && !paneled;
+  const prompting = !trusting && !asking && !picking && !confirming && !paneled;
   const running = st.phase === "running" || st.phase === "permission";
   // AIhub's `/skill <name>` suggestions follow the commands.
   const skillHints = st.skills;
@@ -371,7 +375,9 @@ export function Footer(props: FooterProps) {
   const inputRows = Math.max(1, Math.min(rows, inner - suggestRows - chipRows));
   const maxDiff = asking ? Math.max(0, inner - 1 - (st.permission!.suggestedRule ? 3 : 2)) : undefined;
   const permLayout = asking ? permissionLayout(st.permission!, Math.max(1, width - 4), 0, false, maxDiff) : null;
-  const boxRows = permLayout
+  const boxRows = trusting
+    ? TRUST_ROWS + 2
+    : permLayout
     ? permLayout.rows + 2
     : picking
       ? pickerInnerRows(st.picker!.items.length, inner) + 2
@@ -385,7 +391,7 @@ export function Footer(props: FooterProps) {
     onHeight?.(height);
   }, [height]);
 
-  const hint = armed && prompting ? { text: "Press Ctrl+C again to exit", warn: true } : paneled ? { text: HINTS.panel } : asking ? { text: noting ? HINTS.note : HINTS.permission } : picking ? { text: HINTS.picker } : confirming ? { text: HINTS.confirm } : null;
+  const hint = trusting ? { text: HINTS.trust } : armed && prompting ? { text: "Press Ctrl+C again to exit", warn: true } : paneled ? { text: HINTS.panel } : asking ? { text: noting ? HINTS.note : HINTS.permission } : picking ? { text: HINTS.picker } : confirming ? { text: HINTS.confirm } : null;
   const location = useLocation(controller);
   const status: StatusInput = {
     mode: kindLabel(st.kind, st.mode),
@@ -398,12 +404,14 @@ export function Footer(props: FooterProps) {
 
   return (
     <box flexDirection="column" width={width} height={height} flexShrink={0}>
-      {st.activity && !asking && !picking && !confirming && !paneled ? (
+      {st.activity && !trusting && !asking && !picking && !confirming && !paneled ? (
         <ActivityLine activity={st.activity} now={now()} width={width} interruptible={running && !interrupted} />
       ) : (
         <box height={1} flexShrink={0} />
       )}
-      {asking ? (
+      {trusting ? (
+        <TrustPrompt dir={st.trust!.dir} width={width} now={now} guardMs={guardMs} onAnswer={(yes) => controller.answerTrust(yes)} />
+      ) : asking ? (
         <PermissionPrompt
           key={`${st.permission!.requestId}:${st.permission!.permissionId}`}
           controller={controller}

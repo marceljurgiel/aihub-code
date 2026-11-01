@@ -101,13 +101,26 @@ export function codeAccent(path: string = codeSettingsPath()): string | undefine
 /** Save the hub theme (and accent, when given) in aihub-code's own settings
  *  file (other keys stay). Throws when it can't be written. */
 export function saveCodeTheme(name: string, accent?: string, path: string = codeSettingsPath()): void {
-  let doc: Record<string, unknown> = {};
+  updateCodeSettings((doc) => {
+    doc.theme = name;
+    if (accent !== undefined) doc.accent = accent;
+  }, path);
+}
+
+/** aihub-code's settings as an object ({} when missing, unreadable or not an object). */
+export function readCodeSettings(path: string = codeSettingsPath()): Record<string, unknown> {
   try {
     const v = JSON.parse(readFileSync(path, "utf8"));
-    if (v && typeof v === "object" && !Array.isArray(v)) doc = v;
+    if (v && typeof v === "object" && !Array.isArray(v)) return v;
   } catch {}
-  doc.theme = name;
-  if (accent !== undefined) doc.accent = accent;
+  return {};
+}
+
+/** Change aihub-code's settings in place (other keys stay), written whole
+ *  through a temporary file. Throws when it can't be written. */
+export function updateCodeSettings(change: (doc: Record<string, unknown>) => void, path: string = codeSettingsPath()): void {
+  const doc = readCodeSettings(path);
+  change(doc);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n");
