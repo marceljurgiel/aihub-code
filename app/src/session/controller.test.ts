@@ -845,7 +845,7 @@ describe("fix round 1", () => {
     expect(sink.styled.at(-1)![0]!.dim).toBe(true);
     await c.pick("llama3.2:3b");
     expect(bridge.to("code.start")[0]!.params).toMatchObject({ model: "llama3.2:3b" });
-    expect(bridge.to("models.installed")).toHaveLength(2); // the pick itself is not looked up again
+    expect(bridge.to("models.installed")).toHaveLength(1); // fetched once: the picker reuses the list, the pick is not looked up again
   });
 
   test("I3: cloud.models is never asked during start-up", async () => {

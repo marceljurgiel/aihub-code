@@ -436,6 +436,7 @@ export class Controller {
   async start(args: Args): Promise<void> {
     this.startArgs = { mode: args.mode ?? "build", mcp: args.mcp, kb: args.kb, model: args.model };
     if (!(await this.askTrust())) return this.exit();
+    this.waiting("starting…");
     try {
       this.version = (await this.o.bridge.ready()).version;
     } catch (e) {
@@ -550,7 +551,7 @@ export class Controller {
     } catch (e) {
       if (this.state.sessionId && !this.o.bridge.deadError()) {
         this.error(errText(e));
-        this.set({ phase: "idle" });
+        this.set({ phase: "idle", activity: null });
         this.drainQueue();
       } else {
         this.failStart(e);
@@ -558,9 +559,20 @@ export class Controller {
     }
   }
 
-  private async pickModel(missing?: string): Promise<void> {
+  /** Start-up and session changes say what they wait for (the activity line). */
+  private waiting(label: string): void {
+    // Only while nothing else runs: a check made from a live chat says nothing.
+    if (this.state.phase === "starting") this.set({ activity: { label, since: this.now() } });
+  }
+
+  /** `listed`: the server's list when the caller has just fetched it. */
+  private async pickModel(missing?: string, listed?: { name: string }[]): Promise<void> {
     if (missing) this.note(`model ${missing} isn't available on the server \u2014 pick one`);
-    const { models = [] } = await this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {});
+    let models = listed;
+    if (!models) {
+      this.waiting("loading models…");
+      ({ models = [] } = await this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {}));
+    }
     this.openPicker({
       kind: "model",
       title: "Choose a model",
@@ -572,13 +584,15 @@ export class Controller {
    *  blocks start-up: an empty or failed answer (the engine reports an offline
    *  server as an empty list) and cloud names (not listed locally until used)
    *  count as "unknown", and cloud.models is never asked (it can crawl the web). */
-  private async modelMissing(model: string): Promise<boolean> {
+  private async modelMissing(model: string): Promise<{ name: string }[] | false> {
     if (CLOUD_TAG.test(model)) return false;
+    this.waiting("loading models…");
     try {
       const { models } = await this.o.bridge.request<{ models?: { name: string }[] }>("models.installed", {});
       if (!Array.isArray(models) || models.length === 0) return false;
       const want = withTag(model);
-      return !models.some((m) => withTag(String(m.name)) === want);
+      // Missing: the list goes on to the picker, not fetched again.
+      return models.some((m) => withTag(String(m.name)) === want) ? false : models;
     } catch {
       return false;
     }
@@ -586,13 +600,17 @@ export class Controller {
 
   private openPicker(picker: PickerState, back: Phase | null = null): void {
     this.pickerBack = back;
-    this.set({ phase: "picker", picker });
+    this.set({ phase: "picker", picker, activity: null });
   }
 
   /** With `check`, a model missing from the server's installed list opens the
    *  picker instead; if that cannot be told, we go ahead and the turn reports it. */
   private async startSession(model: string, check: boolean, opts: BeginOptions & { mode?: Mode } = {}): Promise<void> {
-    if (check && (await this.modelMissing(model))) return this.pickModel(model);
+    if (check) {
+      const listed = await this.modelMissing(model);
+      if (listed) return this.pickModel(model, listed);
+    }
+    this.waiting("starting the session…");
     const { mcp, kb } = this.startArgs;
     // A /clear or /model keeps what /kb and /mcp chose (a start flag otherwise).
     const carry = this.optsTouched ? this.wantedOpts() : null;
@@ -667,6 +685,7 @@ export class Controller {
       phase: "idle",
       error: null,
       picker: null,
+      activity: null,
       mode,
       model,
       backend: info.backend === "api" ? "api" : "ollama",
@@ -1481,8 +1500,9 @@ export class Controller {
       this.listing = true;
       let missing = false;
       try {
-        missing = await this.modelMissing(name);
-        if (missing) await this.pickModel(name);
+        const listed = await this.modelMissing(name);
+        missing = listed !== false;
+        if (listed) await this.pickModel(name, listed);
       } finally {
         this.listing = false;
         if (missing) this.drainQueue();
