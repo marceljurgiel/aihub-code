@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ACCENTS, DEFAULT_ACCENT, accentFromConfig, codeAccent, applyConfigAccent, configPath, modeColor, palette } from "./theme";
+import { ACCENTS, DEFAULT_ACCENT, accentFromConfig, codeAccent, codeTheme, configKey, applyConfigAccent, configPath, modeColor, palette, readCodeSettings, updateCodeSettings } from "./theme";
 
 const dir = mkdtempSync(join(tmpdir(), "aihub-code-theme-"));
 let n = 0;
@@ -73,5 +73,30 @@ describe("codeAccent (aihub-code's own accent setting; config.yaml's is only the
     expect(codeAccent(settings('{"theme":"nord"}'))).toBeUndefined();
     expect(codeAccent(settings("not json"))).toBeUndefined();
     expect(codeAccent(join(dir, "none.json"))).toBeUndefined();
+  });
+});
+
+describe("settings files saved with a byte order mark (PowerShell 5.1, Notepad)", () => {
+  const BOM = "﻿";
+  const file = (name: string, text: string) => {
+    const p = join(dir, `bom-${n++}-${name}`);
+    writeFileSync(p, BOM + text);
+    return p;
+  };
+  test("aihub-code's settings still name their theme and accent", () => {
+    const p = file("settings.json", '{"theme":"Dracula","accent":"teal"}');
+    expect(codeTheme(p)).toBe("dracula");
+    expect(codeAccent(p)).toBe("teal");
+    expect(readCodeSettings(p)).toEqual({ theme: "Dracula", accent: "teal" });
+  });
+  test("a change keeps what was there (trusting a folder never drops the theme)", () => {
+    const p = file("settings.json", '{"theme":"dracula"}');
+    updateCodeSettings((doc) => {
+      doc.trusted = ["/home/alex/proj"];
+    }, p);
+    expect(readCodeSettings(p)).toEqual({ theme: "dracula", trusted: ["/home/alex/proj"] });
+  });
+  test("config.yaml's first key is read too", () => {
+    expect(configKey("accent", file("config.yaml", "accent: teal\ntheme: nord\n"))).toBe("teal");
   });
 });

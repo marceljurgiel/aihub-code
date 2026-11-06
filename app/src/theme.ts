@@ -40,6 +40,12 @@ export function configPath(home: string = homeDir()): string {
   return join(home, ".aihub", "config.yaml");
 }
 
+/** A settings file's text without the byte order mark PowerShell 5.1 and
+ *  Notepad can put first (it would break JSON.parse and the first YAML key). */
+function readText(path: string): string {
+  return readFileSync(path, "utf8").replace(/^\uFEFF/, "");
+}
+
 /** A top-level scalar of a config file, lower-cased; undefined when the file
  * or the key is missing (an indented key belongs to another section). AIhub's
  * own `theme:` is not read: AIhub always writes one, and aihub-code's theme is
@@ -47,7 +53,7 @@ export function configPath(home: string = homeDir()): string {
 export function configKey(key: "accent", path: string = configPath()): string | undefined {
   let text: string;
   try {
-    text = readFileSync(path, "utf8");
+    text = readText(path);
   } catch {
     return undefined;
   }
@@ -73,7 +79,7 @@ export function codeSettingsPath(home: string = homeDir()): string {
  * file is missing or unreadable or names none (then the "terminal" theme). */
 export function codeTheme(path: string = codeSettingsPath()): string | undefined {
   try {
-    const v = JSON.parse(readFileSync(path, "utf8"))?.theme;
+    const v = JSON.parse(readText(path))?.theme;
     return typeof v === "string" ? v.trim().toLowerCase() : undefined;
   } catch {
     return undefined;
@@ -91,7 +97,7 @@ export function applyConfigAccent(path?: string): void {
  *  (ruling R-T10-2: aihub-code never writes AIhub's config.yaml for looks). */
 export function codeAccent(path: string = codeSettingsPath()): string | undefined {
   try {
-    const v = JSON.parse(readFileSync(path, "utf8"))?.accent;
+    const v = JSON.parse(readText(path))?.accent;
     return typeof v === "string" ? v.trim().toLowerCase() : undefined;
   } catch {
     return undefined;
@@ -110,7 +116,7 @@ export function saveCodeTheme(name: string, accent?: string, path: string = code
 /** aihub-code's settings as an object ({} when missing, unreadable or not an object). */
 export function readCodeSettings(path: string = codeSettingsPath()): Record<string, unknown> {
   try {
-    const v = JSON.parse(readFileSync(path, "utf8"));
+    const v = JSON.parse(readText(path));
     if (v && typeof v === "object" && !Array.isArray(v)) return v;
   } catch {}
   return {};
