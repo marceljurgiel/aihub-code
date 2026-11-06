@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { applyTheme, THEMES } from "./hub/theme";
-import { followTheme, RESET, themeColours } from "./terminalColours";
+import { followTheme, RESET, resetSequence, themeColours } from "./terminalColours";
 
 afterEach(() => applyTheme("terminal"));
 
@@ -48,5 +48,16 @@ describe("the terminal takes the theme's background and text colour", () => {
     });
     expect(() => applyTheme("dracula")).not.toThrow();
     expect(() => f.restore()).not.toThrow();
+  });
+});
+
+describe("putting the terminal's own colours back", () => {
+  test("Windows: the resets carry a ';' (ConPTY drops a bare OSC 111 / 110)", () => {
+    expect(resetSequence("win32")).toBe("\x1b]111;\x07\x1b]110;\x07");
+  });
+  test("elsewhere the plain form every terminal knows; RESET is this platform's", () => {
+    expect(resetSequence("linux")).toBe("\x1b]111\x07\x1b]110\x07");
+    expect(resetSequence("darwin")).toBe("\x1b]111\x07\x1b]110\x07");
+    expect(RESET).toBe(resetSequence(process.platform));
   });
 });

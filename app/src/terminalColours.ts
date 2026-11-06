@@ -8,7 +8,14 @@
  */
 import { subscribeTheme, theme } from "./hub/theme";
 
-export const RESET = "\x1b]111\x07\x1b]110\x07";
+/** OSC 111 and 110: the terminal's own background and text colour back.
+ *  Windows' ConPTY (Windows Terminal, OpenSSH) drops the bare form and passes
+ *  them on with an empty parameter, so there they carry a ';'. */
+export function resetSequence(platform: string = process.platform): string {
+  return platform === "win32" ? "\x1b]111;\x07\x1b]110;\x07" : "\x1b]111\x07\x1b]110\x07";
+}
+
+export const RESET = resetSequence();
 
 const HEX = /^#[0-9a-f]{6}$/i;
 const rgb = (hex: string): string => `rgb:${hex.slice(1, 3)}/${hex.slice(3, 5)}/${hex.slice(5, 7)}`.toLowerCase();
