@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { BridgeClient, bridgeErrLogPath, resolveBridgeCmd } from "./client.ts";
 
+/** The Python for the fake bridges: "python3" is only the Store alias on a
+ *  bare Windows, so a run there points AIHUB_TEST_PYTHON at a real one. */
+const PY = process.env.AIHUB_TEST_PYTHON || "python3";
+
 test("default bridge argv", () => {
   expect(resolveBridgeCmd({})).toEqual(["python3", "-m", "aihub_code.bridge"]);
 });
@@ -20,7 +24,7 @@ test("a malformed AIHUB_CODE_BRIDGE falls back to the default", () => {
 
 test("the error log is aihub-code's own file", () => {
   expect(bridgeErrLogPath({ AIHUB_CODE_ERR_LOG: "/tmp/x.log" })).toBe("/tmp/x.log");
-  expect(bridgeErrLogPath({}, "/home/u")).toBe("/home/u/.aihub/aihub-code-bridge.err.log");
+  expect(bridgeErrLogPath({}, "/home/u")).toBe(join("/home/u", ".aihub", "aihub-code-bridge.err.log"));
 });
 
 /** A tiny stand-in bridge: says ready, echoes calls, streams two events. */
@@ -42,10 +46,11 @@ for line in sys.stdin:
     else:
         out({"id": m["id"], "done": True, "data": {"echo": m["params"]}})
 `);
-  return ["python3", script];
+  return [PY, script];
 }
 
-test("ready, call, error and stream against a fake bridge", async () => {
+// A cold Python can take seconds to start on a Windows VM (the first in a run).
+test("ready, call, error and stream against a fake bridge", { timeout: 20_000 }, async () => {
   const prev = process.env.AIHUB_CODE_BRIDGE;
   process.env.AIHUB_CODE_BRIDGE = JSON.stringify(fakeBridge());
   const b = new BridgeClient();
@@ -53,7 +58,9 @@ test("ready, call, error and stream against a fake bridge", async () => {
     b.start();
     expect(await b.ready()).toEqual({ version: "9.9" });
     expect(await b.call("echo", { x: 1 })).toEqual({ echo: { x: 1 } });
-    await expect(b.call("boom")).rejects.toThrow("kaboom");
+    // Not expect().rejects: on Windows Bun 1.4 stops reading the pipe while it waits.
+    const err = await b.call("boom").then(() => null, (e: Error) => e);
+    expect(err?.message).toContain("kaboom");
 
     const events: Array<[string, any]> = [];
     const s = b.stream("stream", {}, (e, d) => events.push([e, d]));
@@ -85,7 +92,7 @@ for line in sys.stdin:
     f.write(line); f.flush()
 `);
   const prev = process.env.AIHUB_CODE_BRIDGE;
-  process.env.AIHUB_CODE_BRIDGE = JSON.stringify(["python3", script]);
+  process.env.AIHUB_CODE_BRIDGE = JSON.stringify([PY, script]);
   const b = new BridgeClient();
   try {
     b.start();
@@ -119,7 +126,7 @@ async function withBridge(argv: string[], fn: (b: BridgeClient) => Promise<void>
 }
 
 test("ready() rejects when the bridge exits before the banner", async () => {
-  await withBridge(["sh", "-c", "exit 3"], async (b) => {
+  await withBridge([PY, "-c", "import sys; sys.exit(3)"], async (b) => {
     const err = await b.ready().then(() => null, (e: Error) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err!.message).toContain("code 3");
@@ -147,7 +154,7 @@ for line in sys.stdin:
   const dir = mkdtempSync(join(tmpdir(), "fake-bridge-"));
   const file = join(dir, "bridge.py");
   writeFileSync(file, script);
-  await withBridge(["python3", file], async (b) => {
+  await withBridge([PY, file], async (b) => {
     await b.ready();
     expect(b.deadError()).toBeNull();
     const events: string[] = [];
@@ -176,7 +183,7 @@ for line in sys.stdin:
         os._exit(5)
 `);
   const heard: string[] = [];
-  await withBridge(["python3", file], async (b) => {
+  await withBridge([PY, file], async (b) => {
     b.onDead((e) => heard.push(e.message));
     await b.ready();
     b.call("die").catch(() => {});
@@ -207,7 +214,7 @@ for line in sys.stdin:
     pass
 ${cleanup}
 `);
-  return { argv: ["python3", file], dir };
+  return { argv: [PY, file], dir };
 }
 const alive = (pid: number) => {
   try {

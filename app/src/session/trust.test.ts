@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileTrust } from "./trust";
 
 function store(initial?: string) {
@@ -37,14 +37,14 @@ describe("trusted folders (aihub-code-settings.json)", () => {
     trust.trust("/home/alex/proj/");
     trust.trust("/home/alex/proj");
     const doc = JSON.parse(readFileSync(path, "utf8"));
-    expect(doc).toEqual({ theme: "nord", accent: "teal", trusted: ["/home/alex/proj"] });
+    expect(doc).toEqual({ theme: "nord", accent: "teal", trusted: [resolve("/home/alex/proj")] });
   });
 
   test("a broken file trusts nothing, and trusting starts it over", () => {
     const { path, trust } = store("{ not json");
     expect(trust.trusted("/home/alex/proj")).toBe(false);
     trust.trust("/home/alex/proj");
-    expect(JSON.parse(readFileSync(path, "utf8")).trusted).toEqual(["/home/alex/proj"]);
+    expect(JSON.parse(readFileSync(path, "utf8")).trusted).toEqual([resolve("/home/alex/proj")]);
   });
 
   test("odd entries in the list are ignored", () => {

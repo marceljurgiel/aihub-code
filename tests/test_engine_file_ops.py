@@ -3,6 +3,7 @@ newline translation on write. The runner must use these, never AIhub 1.5.0's
 edit_file / write_file, so the diff the user approves equals what is written
 (ruling R13)."""
 import os
+import sys
 
 import pytest
 
@@ -121,6 +122,7 @@ def test_runner_never_calls_aihubs_own_edit_and_write(runner, monkeypatch):
     assert "[File OK]" in r("write_file", {"path": "g.txt", "content": "q"})
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="1.5.0's text-mode write keeps CRLF on Windows; the loss is POSIX-only")
 def test_aihub_1_5_0_edit_would_have_lost_the_crlf(tmp_path, monkeypatch):
     # The reason aihub-code has its own copy: this is what 1.5.0 does.
     from aihub.tools.file_ops import edit_file as aihub_edit

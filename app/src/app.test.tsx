@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { constants } from "node:os";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { Args } from "./args";
 import { launch, type Launched } from "./app";
@@ -357,6 +358,7 @@ describe("leaving", () => {
   test("SIGINT, SIGQUIT and SIGPIPE close it too (core's own handler only destroys the renderer)", async () => {
     const codes = { SIGINT: 130, SIGQUIT: 131, SIGPIPE: 141 } as const;
     for (const [signal, code] of Object.entries(codes)) {
+      if (!(signal in constants.signals)) continue; // Windows has no SIGQUIT / SIGPIPE
       const proc = new EventEmitter();
       const forced: number[] = [];
       const t = await run({ launch: { proc, forceExit: (c) => forced.push(c), forceExitMs: 20 } });

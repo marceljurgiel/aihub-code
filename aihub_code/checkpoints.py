@@ -39,6 +39,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -129,12 +130,25 @@ def _lstat(path: str) -> os.stat_result | None:
         return None
 
 
+def _readlink(path: str) -> str:
+    """A symlink's target as it was written. Windows' readlink adds the
+    long-path prefix ("\\\\?\\C:\\..."); a link restored with it would point at
+    the same file under a different target string."""
+    target = os.readlink(path)
+    if sys.platform == "win32":
+        if target.startswith("\\\\?\\UNC\\"):
+            return "\\\\" + target[8:]
+        if target.startswith("\\\\?\\"):
+            return target[4:]
+    return target
+
+
 def _fingerprint(path: str) -> str | None:
     """What is at `path`, without following symlinks: None when absent."""
     try:
         st = os.lstat(path)
         if stat.S_ISLNK(st.st_mode):
-            return "link:" + os.readlink(path)
+            return "link:" + _readlink(path)
         if stat.S_ISDIR(st.st_mode):
             return "dir"
         if not stat.S_ISREG(st.st_mode):
@@ -630,7 +644,7 @@ class CheckpointStore:
                 item["kind"] = "lost"
             if st is not None and stat.S_ISLNK(st.st_mode):
                 try:
-                    item.update(kind="link", target=os.readlink(full))
+                    item.update(kind="link", target=_readlink(full))
                 except OSError:
                     item["kind"] = "lost"
             elif st is not None and stat.S_ISREG(st.st_mode):

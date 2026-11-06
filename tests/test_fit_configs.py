@@ -18,8 +18,6 @@ from __future__ import annotations
 import contextlib
 import json
 import math
-import os
-import pwd
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Union
@@ -35,7 +33,9 @@ from aihub.target import DEFAULT_BW, Target
 from aihub_code.installed_fit import add_fit
 
 # Never touch the real ~/.aihub (the fake servers.json is written below).
-assert Path(CONFIG_DIR).resolve() != Path(pwd.getpwuid(os.getuid()).pw_dir).resolve() / ".aihub"
+# conftest.py points HOME (and USERPROFILE) at a fresh "aihub-test-home-*"
+# folder before aihub is imported; this holds on every OS (no pwd on Windows).
+assert Path(CONFIG_DIR).resolve().parent.name.startswith("aihub-test-home-"), CONFIG_DIR
 
 RANK = {"none": 0, "cpu": 1, "partial": 2, "gpu": 3}
 SERVER_URL = "http://203.0.113.7:11434"          # TEST-NET: never local, never contacted

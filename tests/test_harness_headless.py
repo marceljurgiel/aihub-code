@@ -146,7 +146,9 @@ def test_keyboard_interrupt_cancels_and_exits_130(proj, monkeypatch):
     orig_join = threading.Thread.join
     state = {"n": 0}
     def join(self, timeout=None):
-        if self.name != threading.current_thread().name and state["n"] == 0 and self.daemon:
+        # Only headless's own worker: on Windows subprocess joins its pipe readers too.
+        target = getattr(self, "_target", None)
+        if state["n"] == 0 and getattr(target, "__name__", "") == "work":
             state["n"] = 1
             raise KeyboardInterrupt
         return orig_join(self, timeout)

@@ -12,7 +12,7 @@ def _setup(tmp_path, monkeypatch):
 
 def test_edit_preview_exact_text(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
-    (tmp_path / "a.txt").write_text("one\nold line\nthree\n")
+    (tmp_path / "a.txt").write_bytes(b"one\nold line\nthree\n")  # LF on every OS
     d = preview("edit_file", {"path": "a.txt", "old": "old line", "new": "new line"})
     assert d.added == d.removed == 1
     assert "--- a/a.txt" in d.text and "+++ b/a.txt" in d.text

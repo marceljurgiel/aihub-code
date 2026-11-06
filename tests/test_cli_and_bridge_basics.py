@@ -58,8 +58,9 @@ def test_cli_makes_stdout_and_stderr_utf8(monkeypatch):
     # non-Latin text into "?".
     import aihub_code.cli as cli
     raw_out, raw_err = io.BytesIO(), io.BytesIO()
-    out = io.TextIOWrapper(raw_out, encoding="cp1252", errors="strict", write_through=True)
-    err = io.TextIOWrapper(raw_err, encoding="cp1252", errors="strict", write_through=True)
+    # newline="\n": what is checked is the encoding, not Windows' CRLF.
+    out = io.TextIOWrapper(raw_out, encoding="cp1252", errors="strict", write_through=True, newline="\n")
+    err = io.TextIOWrapper(raw_err, encoding="cp1252", errors="strict", write_through=True, newline="\n")
     monkeypatch.setattr(sys, "stdout", out)
     monkeypatch.setattr(sys, "stderr", err)
     try:
@@ -85,6 +86,11 @@ def _patch_launch(monkeypatch, bun="/opt/bun/bin/bun"):
     calls = []
     monkeypatch.setattr(cli_mod, "_find_bun", lambda: bun)
     monkeypatch.setattr(cli_mod.os, "execvpe", lambda *a: calls.append(a))
+    # Windows waits for the app as a child process instead of exec'ing it.
+    def call(argv, env=None):
+        calls.append((argv[0], argv, env))
+        return 0
+    monkeypatch.setattr(cli_mod.subprocess, "call", call)
     return calls
 
 

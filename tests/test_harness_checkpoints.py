@@ -530,7 +530,9 @@ def test_files_mode_restores_a_symlink_as_a_link(tmp_path, proj, monkeypatch):
     (proj / "link").write_bytes(b"now a file")
     cp.finish_turn()
     cp.undo()
-    assert os.readlink(proj / "link") == str(target)
+    from aihub_code.checkpoints import _readlink
+    assert (proj / "link").is_symlink()
+    assert _readlink(str(proj / "link")) == str(target)   # Windows' readlink adds "\\?\"
     assert target.read_bytes() == b"target"
 
 
@@ -974,3 +976,19 @@ def test_a_key_begun_again_is_not_undone(tmp_path, proj):
     a.finish_turn()
     assert a.undo_plan().turn_id == "t1"
     assert b.undo_plan().turn_id == "t1"
+
+
+def test_a_windows_link_target_loses_the_long_path_prefix(monkeypatch):
+    # os.readlink on Windows hands back "\\?\C:\..." for a link made to
+    # "C:\...": undo must restore the target as it was written.
+    from aihub_code import checkpoints as cp
+    monkeypatch.setattr(cp.os, "readlink", lambda p: "\\\\?\\C:\\Users\\alex\\target.txt")
+    monkeypatch.setattr(cp.sys, "platform", "win32")
+    assert cp._readlink("x") == "C:\\Users\\alex\\target.txt"
+    monkeypatch.setattr(cp.os, "readlink", lambda p: "\\\\?\\UNC\\server\\share\\t.txt")
+    assert cp._readlink("x") == "\\\\server\\share\\t.txt"
+    monkeypatch.setattr(cp.os, "readlink", lambda p: "relative\\t.txt")
+    assert cp._readlink("x") == "relative\\t.txt"
+    monkeypatch.setattr(cp.sys, "platform", "linux")
+    monkeypatch.setattr(cp.os, "readlink", lambda p: "\\\\?\\odd-but-legal-on-linux")
+    assert cp._readlink("x") == "\\\\?\\odd-but-legal-on-linux"
