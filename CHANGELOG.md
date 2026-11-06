@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.0] - 2026-10-30
+## [0.3.0] - 2026-11-06
 
 All of AIhub in the CLI.
 

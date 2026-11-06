@@ -5,7 +5,7 @@
 #
 # Needs podman. The server is reached as "gpu-box.lan" inside the recording,
 # so its real address never shows. MODEL=<name> picks the model (default
-# gemma4:cloud). Writes docs/media/demo.gif, demo.mp4 and demo.png.
+# gemma4:cloud). Writes docs/media/demo.mp4, demo.gif (made from it) and demo.png.
 set -euo pipefail
 : "${OLLAMA_SERVER:?set OLLAMA_SERVER to your Ollama server, e.g. OLLAMA_SERVER=192.0.2.10}"
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -26,6 +26,11 @@ for attempt in 1 2; do
   if podman run --rm --userns=keep-id --user alex -e HOME=/home/alex -w /vhs --hostname demo-pc \
        --add-host "gpu-box.lan:$OLLAMA_SERVER" \
        -v "$work/tapes:/vhs:Z" -v "$work/out:/vhs/out:Z" aihub-code-vhs /vhs/demo.tape; then
+    # The GIF is made from the video afterwards, at a smaller size: rendering
+    # it inside VHS needs a lot more memory.
+    podman run --rm -v "$work/out:/out:Z" --entrypoint ffmpeg aihub-code-vhs -v error -y -i /out/demo.mp4 \
+      -vf "fps=10,scale=1000:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4" \
+      /out/demo.gif
     cp "$work/out/"* "$here/"
     echo "done — check the frames before committing (no real names, paths or addresses)"
     exit 0

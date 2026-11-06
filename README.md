@@ -1,5 +1,10 @@
 # aihub-code
 
+[![CI](https://github.com/marceljurgiel/aihub-code/actions/workflows/ci.yml/badge.svg)](https://github.com/marceljurgiel/aihub-code/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+![aihub-code finds and fixes a failing test, then asks before an edit](docs/media/demo.gif)
+
 A Claude-Code-style coding agent for the terminal that runs on **local and
 cloud models** through [Ollama](https://ollama.com). Start it in your project
 folder and talk to it: it reads your code, edits files, runs commands and
@@ -42,10 +47,10 @@ aihub-code runs (OSC 11/10; terminals that don't support it keep theirs)
 and puts them back when it closes. aihub-code installs AIhub's
 released engine as a dependency and never modifies it.
 
-> **Status: early (0.3.0).** Developed and tried on Linux. The Windows and
-> macOS installers and the interactive UI have not been tried on a real
-> Windows or macOS machine yet. Expect rough edges, and small local models
-> sometimes ask instead of acting.
+> **Status: early (0.3.0).** Developed on Linux and tried on Windows 11;
+> CI runs the tests on Linux, macOS and Windows, but it has not been tried
+> by hand on a Mac yet. Expect rough edges, and small local models sometimes
+> ask instead of acting.
 
 ## Install
 
@@ -307,7 +312,12 @@ cd app && bun install && bun test && bunx tsc --noEmit
 
 Tests run with a throwaway home directory and never touch `~/.aihub` or the
 network. The deliberate behaviour decisions are in
-[docs/RULINGS.md](docs/RULINGS.md).
+[docs/RULINGS.md](docs/RULINGS.md); the demo at the top is recorded with
+[docs/media/record.sh](docs/media/README.md).
+
+Bug reports and ideas are welcome in the
+[issues](https://github.com/marceljurgiel/aihub-code/issues); please report
+security problems privately (see [SECURITY.md](SECURITY.md)).
 
 ## License
 
