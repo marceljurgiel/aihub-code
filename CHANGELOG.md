@@ -20,7 +20,7 @@ All of AIhub in the CLI.
 - Scheduled tasks run in the background; their results are printed into the
   scrollback, and a missed run asks first.
 - A status line with the model and where it runs, the kind and mode, context
-  used, `kb:<name>`, `mcp:on` and a running task.
+  used, `kb:<n>` (how many knowledge bases), `mcp:on` and a running task.
 - A theme other than "terminal" colours the whole terminal (background and
   text) while aihub-code runs, not only the text; closing puts the
   terminal's own colours back.
@@ -55,7 +55,8 @@ All of AIhub in the CLI.
   and you are already in a terminal.
 - Scheduled tasks run only while aihub-code is open; the shortest interval
   is 5 minutes, as in AIhub.
-- Tried on Linux only.
+- Tried on Linux and on Windows 11 (the test suites, the installer, and a
+  session over SSH); not yet in Windows Terminal itself, and not on macOS.
 
 ## [0.2.0] - 2026-10-26
 

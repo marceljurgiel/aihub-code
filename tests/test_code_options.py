@@ -91,3 +91,14 @@ def test_saved_options_survive_resume(started, monkeypatch):
 def test_info_carries_options(started):
     info = bridge._code_info(started)
     assert info["mcp"] is False and info["knowledge"] == []
+
+
+def test_options_for_a_session_no_longer_open_are_refused(started, monkeypatch):
+    # The app sent them for the session it had; code.start (on its own thread)
+    # may have put a new one in place first: that one must not get them.
+    monkeypatch.setattr("aihub.knowledge.names", lambda: ["docs"])
+    with pytest.raises(bridge._CodeError, match="no longer open"):
+        bridge._h_code_options({"knowledge": ["docs"], "session_id": "an-older-one"})
+    assert started.knowledge == []
+    assert bridge._h_code_options({"knowledge": ["docs"], "session_id": started.id}) == \
+        {"mcp": False, "knowledge": ["docs"]}

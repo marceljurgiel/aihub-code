@@ -391,6 +391,46 @@ describe("finalize", () => {
     expect(m.exits).toEqual([1]);
   });
 
+  for (const cmd of ["/clear", "/new"]) {
+    test(`${cmd} after an interrupted chat turn saves that chat before the new one`, async () => {
+      const m = await started();
+      await m.c.setKind({ type: "chat" });
+      await m.run("hi");
+      m.c.cancel();
+      m.bridge.lastStream.finish({ messages: PARTIAL, cancelled: true });
+      await settle();
+      await m.run(cmd);
+      await settle();
+      const f = m.bridge.to("chat.finalize");
+      expect(f).toHaveLength(1);
+      expect(f[0]!.params).toMatchObject({ messages: PARTIAL, auto: true });
+    });
+  }
+
+  test("a chat from history loaded over an interrupted chat turn saves that turn first", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    await m.run("hi");
+    m.c.cancel();
+    m.bridge.lastStream.finish({ messages: PARTIAL, cancelled: true });
+    await settle();
+    expect(await m.c.loadHistory([{ role: "user", content: "old" }, { role: "assistant", content: "answer" }])).toBe(true);
+    const f = m.bridge.to("chat.finalize");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.params.messages).toEqual(PARTIAL);
+  });
+
+  test("a finished chat is not saved twice by /clear", async () => {
+    const m = await started();
+    await m.c.setKind({ type: "chat" });
+    await m.run("hi");
+    m.bridge.lastStream.finish({ messages: [SYS, { role: "user", content: "hi" }, { role: "assistant", content: "hello" }] });
+    await settle();
+    await m.run("/clear");
+    await settle();
+    expect(m.bridge.to("chat.finalize")).toHaveLength(1);
+  });
+
   test("exit during a chat turn interrupts it, then saves the chat once it has ended", async () => {
     const m = await started();
     await m.c.setKind({ type: "chat" });

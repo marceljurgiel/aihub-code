@@ -27,6 +27,7 @@ code.resume; every other code.* method needs one):
     code.start {cwd, model, backend?, stream_model?, mode?, context_length?, mcp?, knowledge?}
     code.resume {cwd, session_id}      code.sessions {cwd}
     code.mode {mode}                   code.todos        code.rules.list
+    code.options {mcp?, knowledge?, session_id?}   (refused for a session no longer open)
     code.rules.add / code.rules.remove {tool, pattern?, scope}
     code.undo {confirm?, force?}       (streaming:) code.turn {text, images?}, code.compact
 
@@ -388,8 +389,13 @@ def _h_code_options(p):
     mcp = p.get("mcp")
     if mcp is not None and not isinstance(mcp, bool):
         raise _CodeError("mcp must be true or false")
+    sid = p.get("session_id")
     with _claim_code():
         s = _code_session()
+        if sid is not None and sid != s.id:
+            # Sent for a session that code.start or code.resume (each request
+            # runs on its own thread) has replaced meanwhile.
+            raise _CodeError("that code session is no longer open")
         out = s.set_options(mcp, kb)
         s.store().save(s)       # quitting right after must not lose the change
         return out

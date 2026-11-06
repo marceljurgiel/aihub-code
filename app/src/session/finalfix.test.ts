@@ -149,6 +149,28 @@ describe("m3: options and session switches", () => {
   });
 });
 
+describe("m3: code.options names its session", () => {
+  test("each change says which session it is for", async () => {
+    const m = await started();
+    await m.run("/kb docs");
+    await settle();
+    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: ["docs"], session_id: "s1" });
+  });
+
+  test("the engine's no for a session already replaced is not an error to show", async () => {
+    const m = await started();
+    await m.run("/model nope:1b");
+    const opt = hold(m.bridge, "code.options");
+    await m.run("/kb docs"); // for s1
+    await m.c.pick("llama3.2:3b"); // s2 comes first in the engine
+    await settle();
+    opt.release(Promise.reject(new Error("that code session is no longer open")));
+    await settle();
+    expect(m.text()).not.toContain("no longer open");
+    expect(m.c.getState().knowledge).toEqual([]);
+  });
+});
+
 describe("m7: a scheduled task never starts while a session or a kind switch is coming up", () => {
   test("isBusy() while the session starts", async () => {
     const bridge = new MockBridge();
@@ -249,7 +271,7 @@ describe("d6: closing the knowledge window prunes deleted bases", () => {
     m.bridge.answers["kb.list"] = { bases: [BASES[1]] };
     await m.c.knowledgeClosed();
     await settle();
-    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: [] });
+    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: [], session_id: "s1" });
     expect(m.c.getState().knowledge).toEqual([]);
   });
 
@@ -300,6 +322,19 @@ describe("d7: an attach that resolves after the conversation changed is dropped"
     await settle();
     expect(m.text()).not.toContain("can't see images");
     expect(m.bridge.to("attach.clipboard")).toHaveLength(0);
+    expect(m.c.getState().images).toEqual([]);
+  });
+
+  test("a typed image path that meets a change while vision.check is out says to attach it again", async () => {
+    const m = await started();
+    const vision = hold(m.bridge, "vision.check");
+    const p = m.c.attachPaths("/tmp/a.png");
+    await settle();
+    await m.run("/new");
+    vision.release({ vision: true });
+    expect(await p).toBe(true); // spoken for: the path is not sent as a prompt
+    expect(m.text()).toContain("attach it again");
+    expect(m.bridge.to("attach.paste")).toHaveLength(0);
     expect(m.c.getState().images).toEqual([]);
   });
 

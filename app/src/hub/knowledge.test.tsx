@@ -194,3 +194,22 @@ test("Agents → k attaches a base to the agent", async () => {
   const saved = bridge.calls.find(([m]) => m === "agents.save")![1].agent;
   expect(saved.tools).toEqual(["read_file", "kb:home"]);
 });
+
+test("Agents → k with no bases yet points to /knowledge (aihub-code has no F6)", async () => {
+  const bridge = await open();
+  bridge.bases = [];
+  const win = await openWindow(
+    bridge,
+    (close) => <AgentModal current={null} model="llama3.2:3b" backend="ollama" streamModel="llama3.2:3b" onChoose={() => {}} onClose={close} />,
+    { width: 110, height: 36 },
+  );
+  setup = win.setup;
+  await until((f) => f.includes("Agents") && f.includes("house"));
+  setup!.mockInput.pressArrow("down");
+  await until((f) => f.includes("no knowledge base"));
+  setup!.mockInput.pressKey("k");
+  await until((f) => f.includes("No knowledge bases yet"));
+  const f = setup!.captureCharFrame();
+  expect(f).toContain("/knowledge");
+  expect(f).not.toContain("F6");
+});

@@ -45,7 +45,7 @@ describe("the connection windows in the footer", () => {
     mm.setup.mockInput.pressEscape();
     await until(() => mm.c.getState().panel === null, mm.settle);
     await until(() => mm.bridge.to("code.options").length === 1, mm.settle);
-    expect(mm.bridge.to("code.options")[0]!.params).toEqual({ mcp: true });
+    expect(mm.bridge.to("code.options")[0]!.params).toEqual({ mcp: true, session_id: "s1" });
   });
 
   test("Esc during the Google sign-in sends the routed chat.cancel, and the panel still works", async () => {

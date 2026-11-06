@@ -309,6 +309,8 @@ export class Controller {
   private modeWanted: Mode | null = null;
   private modeBusy = false;
   private modeAnnounce = true;
+  /** The last "mode can change …" a Shift+Tab printed, and in which turn. */
+  private modeWaitNoted: { wait: string; turn: unknown } | null = null;
   // An undo is in flight (preview or confirm): no turn may start meanwhile.
   private undoBusy = false;
   // A picker's list is being fetched (/sessions): same.
@@ -1065,6 +1067,7 @@ export class Controller {
     if (n > 0) this.note(`dropped ${n} queued prompt${n === 1 ? "" : "s"}`);
     this.set({ phase: "running", activity: { label: "interrupting…", since: this.now() }, permission: null, queue: [] });
     this.queuedImages = [];
+    this.resetWaitNotes();
   }
 
   // ── mode ───────────────────────────────────────────────────────────────────
@@ -1098,9 +1101,13 @@ export class Controller {
             ? "mode can change when the list has loaded"
             : null;
     if (wait) {
-      this.note(wait);
+      // Shift+Tab says why once per wait (per turn), not once a press.
+      const seen = this.modeWaitNoted;
+      if (announce || seen?.wait !== wait || seen.turn !== this.turn) this.note(wait);
+      this.modeWaitNoted = { wait, turn: this.turn };
       return;
     }
+    this.modeWaitNoted = null;
     this.set({ mode });
     this.modeWanted = mode;
     this.modeAnnounce = announce; // the latest request decides
@@ -1489,7 +1496,10 @@ export class Controller {
     if (!this.requireSession() || !this.canSwitch()) return;
     const k = this.state.kind;
     if (k.type !== "code") {
-      await this.switchWith(() => this.openHub(k, this.current(), { fresh: true }));
+      await this.switchWith(async () => {
+        await this.saveUnsavedChat();
+        await this.openHub(k, this.current(), { fresh: true });
+      });
       return;
     }
     await this.replaceSession(() => this.startSession(this.state.model, false, { mode: this.state.mode, fresh: { previous: this.codeResumeId() } }));
@@ -1670,7 +1680,8 @@ export class Controller {
   // ── images ─────────────────────────────────────────────────────────────────
 
   /** Can the model in front read images? Asked once per model. False also
-   *  when the conversation changed meanwhile (`seq`): nothing to say then. */
+   *  when the conversation changed meanwhile (`seq`): then the verdict was for
+   *  another model, and the note says to attach the image again. */
   private async canSee(seq: number): Promise<boolean> {
     const s = this.state;
     const key = `${s.backend}:${s.streamModel || s.model}`;
@@ -1680,7 +1691,7 @@ export class Controller {
       ok = !!d?.vision;
       // Only a yes is kept: the engine answers no when Ollama is slow to say.
       if (ok) this.vision.set(key, true);
-      if (seq !== this.convSeq) return false;
+      if (this.stale(seq)) return false; // says to attach it again
     }
     if (!ok) this.error(`${s.model} can't see images \u2014 pick a vision model (/model), e.g. gemma4:cloud`);
     return ok;
@@ -1843,7 +1854,8 @@ export class Controller {
         this.pendingOpts = null;
         const seq = this.sessionSeq;
         try {
-          const r = await this.o.bridge.request<{ mcp?: boolean; knowledge?: string[] }>("code.options", change);
+          // The engine refuses it if another session took this one's place first.
+          const r = await this.o.bridge.request<{ mcp?: boolean; knowledge?: string[] }>("code.options", { ...change, session_id: this.state.sessionId });
           // A newer session has its own options (and this change never reached it).
           if (seq !== this.sessionSeq) continue;
           this.codeOpts = {
@@ -1853,6 +1865,7 @@ export class Controller {
           this.set({ mcp: this.codeOpts.mcp, ...(this.state.kind.type === "code" ? { knowledge: [...this.codeOpts.knowledge] } : {}) });
           for (const f of done) f();
         } catch (e) {
+          if (seq !== this.sessionSeq) continue; // for a session that has been replaced
           if (!this.exited && !this.o.bridge.deadError()) this.error(errText(e));
         }
       }
@@ -1959,6 +1972,7 @@ export class Controller {
       const cur = this.state.kind;
       const k: HubKind = cur.type === "code" ? { type: "chat" } : cur;
       if (cur.type === "code") this.leaveCode();
+      else await this.saveUnsavedChat();
       const m = this.current();
       const hub = new HubChat(this.o.bridge, m);
       hub.load(messages, startTime);
@@ -2006,7 +2020,15 @@ export class Controller {
     if (n === 0) return;
     this.note(`dropped ${n} queued prompt${n === 1 ? "" : "s"}`);
     this.queuedImages = [];
+    this.resetWaitNotes();
     this.set({ queue: [] });
+  }
+
+  /** The queue was emptied: the next prompt to wait (for memory or a task)
+   *  says so again. */
+  private resetWaitNotes(): void {
+    this.memoryWaitNoted = false;
+    this.taskWaitNoted = false;
   }
 
   /** The code session goes behind: its resume line (once), and what to come back to. */
@@ -2020,10 +2042,16 @@ export class Controller {
     this.codeSnap = { model, backend, streamModel, ctx, resume: this.codeResumeId() };
   }
 
-  private async enterCode(): Promise<void> {
-    // An interrupted chat turn was not saved yet: the conversation ends here.
+  /** An interrupted chat turn is not saved at once (AIhub saves after a
+   *  reply): when its conversation ends — code, /clear, /new, a chat from
+   *  history — it goes to AIhub's history then. */
+  private async saveUnsavedChat(): Promise<void> {
     const old = this.hub;
     if (old?.unsaved) await old.finalize(true).catch((e) => this.error(`Saving the chat failed: ${errText(e)}`));
+  }
+
+  private async enterCode(): Promise<void> {
+    await this.saveUnsavedChat();
     if (this.exited) return;
     const snap = this.codeSnap;
     const m = this.current();

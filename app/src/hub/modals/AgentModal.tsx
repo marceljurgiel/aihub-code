@@ -320,7 +320,7 @@ export function AgentModal({
           </text>
           <box flexDirection="column" height={VIEWPORT} flexShrink={0} marginTop={1}>
             {kbBases.length === 0 ? (
-              <text fg={theme.fg2}>{"  No knowledge bases yet — make one in Knowledge (F6)."}</text>
+              <text fg={theme.fg2}>{"  No knowledge bases yet — /knowledge makes one from your documents."}</text>
             ) : (
               kbBases.slice(kbList.start, kbList.end).map((b, i) => {
                 const idx = kbList.start + i;

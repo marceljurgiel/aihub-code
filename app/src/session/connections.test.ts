@@ -53,7 +53,7 @@ describe("/kb under the code agent", () => {
   test("/kb docs → code.options and the note", async () => {
     const m = await started();
     await m.run("/kb docs");
-    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"] } }]);
+    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"], session_id: "s1" } }]);
     expect(m.text()).toContain("¶ Using docs in this chat — answers draw on those documents and cite them [1]. /kb off stops.");
     expect(m.c.getState().knowledge).toEqual(["docs"]);
   });
@@ -62,7 +62,7 @@ describe("/kb under the code agent", () => {
     const m = await started();
     await m.run("/kb docs");
     await m.run("/kb notes, docs");
-    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: ["docs", "notes"] });
+    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: ["docs", "notes"], session_id: "s1" });
     expect(m.text()).toContain("¶ Using docs, notes in this chat");
   });
 
@@ -78,7 +78,7 @@ describe("/kb under the code agent", () => {
     const m = await started();
     await m.run("/kb docs");
     await m.run("/kb off");
-    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: [] });
+    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: [], session_id: "s1" });
     expect(m.text()).toContain("Knowledge off for this chat.");
     expect(m.c.getState().knowledge).toEqual([]);
   });
@@ -111,7 +111,7 @@ describe("/kb under the code agent", () => {
     expect(m.text()).not.toContain("¶ Using docs");
     m.bridge.lastStream.finish({});
     await settle();
-    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"] } }]);
+    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"], session_id: "s1" } }]);
     expect(m.text()).toContain("¶ Using docs in this chat");
     expect(m.c.getState().knowledge).toEqual(["docs"]);
   });
@@ -141,7 +141,7 @@ describe("/kb under the code agent", () => {
     expect(m.text()).toContain("dropped 1 queued prompt");
     m.bridge.lastStream.finish({});
     await settle();
-    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"] } }]);
+    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"], session_id: "s1" } }]);
     expect(m.bridge.to("code.turn")).toHaveLength(1);
     expect(m.c.getState().knowledge).toEqual(["docs"]);
   });
@@ -156,7 +156,7 @@ describe("/kb under the code agent", () => {
     await settle();
     m.bridge.lastStream.finish({});
     await settle();
-    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"] } }]);
+    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { knowledge: ["docs"], session_id: "s1" } }]);
     expect(exits).toEqual(["exit"]);
     const order = m.bridge.calls.map((x) => x.method);
     expect(order.lastIndexOf("code.options")).toBeGreaterThan(order.lastIndexOf("code.turn"));
@@ -237,7 +237,7 @@ describe("closing the windows", () => {
     expect(m.bridge.to("kb.list")).toHaveLength(2);
     expect(m.c.getState().kbNames).toEqual(["docs", "notes", "fresh"]);
     await m.run("/kb fresh");
-    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: ["fresh"] });
+    expect(m.bridge.to("code.options").at(-1)!.params).toEqual({ knowledge: ["fresh"], session_id: "s1" });
   });
 
   test("closing /mcp under code: any server enabled → code.options {mcp: true}", async () => {
@@ -246,7 +246,7 @@ describe("closing the windows", () => {
     m.c.mcpClosed();
     await settle();
     expect(m.bridge.to("mcp.list")[0]!.params).toEqual({});
-    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { mcp: true } }]);
+    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { mcp: true, session_id: "s1" } }]);
     expect(m.c.getState().mcp).toBe(true);
   });
 
@@ -255,7 +255,7 @@ describe("closing the windows", () => {
     m.bridge.answers["mcp.list"] = { servers: [{ name: "a", enabled: false }] };
     m.c.mcpClosed();
     await settle();
-    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { mcp: false } }]);
+    expect(m.bridge.to("code.options")).toEqual([{ method: "code.options", params: { mcp: false, session_id: "s1" } }]);
     m.c.mcpClosed();
     await settle();
     expect(m.bridge.to("code.options")).toHaveLength(1);

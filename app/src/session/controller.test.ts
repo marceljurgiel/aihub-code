@@ -718,6 +718,19 @@ describe("mode", () => {
     expect(sink.lines.at(-1)).toBe("mode can change when the turn is done");
   });
 
+  test("Shift+Tab pressed again and again during a turn says so once, not once a press", async () => {
+    const { c, bridge, sink } = await running();
+    const before = sink.lines.length;
+    c.cycleMode();
+    c.cycleMode();
+    c.cycleMode();
+    await settle();
+    expect(sink.lines.slice(before)).toEqual(["mode can change when the turn is done"]);
+    expect(bridge.to("code.mode")).toHaveLength(0);
+    c.setMode("plan"); // /mode is asked for by name: it always answers
+    expect(sink.lines.slice(before)).toEqual(["mode can change when the turn is done", "mode can change when the turn is done"]);
+  });
+
   test("not before a session exists", async () => {
     const { c, bridge } = make();
     c.cycleMode();

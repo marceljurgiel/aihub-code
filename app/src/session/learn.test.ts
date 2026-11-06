@@ -525,6 +525,20 @@ describe("one model request at a time across memory features (I1)", () => {
     expect(said).toBeLessThan(echo);
   });
 
+  test("after a dropped queue, the next wait for memory says so again", async () => {
+    const m = await withHeldExtract();
+    await m.run("/memoryadd");
+    await m.run("next one");
+    expect(m.sink.lines.filter((l) => l.includes(WAITING))).toHaveLength(1);
+    await m.run("/agent chat"); // a kind switch drops what was queued
+    await settle();
+    expect(m.text()).toContain("dropped 1 queued prompt");
+    await m.run("for the chat");
+    expect(m.sink.lines.filter((l) => l.includes(WAITING))).toHaveLength(2);
+    m.release({ ok: true });
+    await settle();
+  });
+
   test("/compact during a learn is refused", async () => {
     const m = await started();
     let release!: (v: unknown) => void;
