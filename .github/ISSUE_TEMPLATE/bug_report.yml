@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in aihub-code doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please leave out anything private — passwords,
+        tokens, email addresses, names of your own files, projects or servers.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead. A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start aihub-code in a project
+        2. Ask "fix the failing test"
+        3. …
+  - type: input
+    id: version
+    attributes:
+      label: aihub-code version
+      description: The output of `aihub-code --version`.
+      placeholder: aihub-code 0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: System
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal app
+      placeholder: GNOME Terminal, Kitty, iTerm2, Windows Terminal…
+  - type: input
+    id: ollama
+    attributes:
+      label: Ollama and model
+      description: Ollama on this machine or on another one, its version, and the model you used.
+      placeholder: Ollama 0.40.2 on a server · gemma4:cloud
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - build
+        - auto
+        - plan
+        - -p (one task, no UI)
+  - type: textarea
+    id: log
+    attributes:
+      label: Error log
+      description: |
+        The last lines of `~/.aihub/aihub-code-bridge.err.log`
+        (`%USERPROFILE%\.aihub\aihub-code-bridge.err.log` on Windows), if there is an error.
+        Check them for anything private first.
+      render: text

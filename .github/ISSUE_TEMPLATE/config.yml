@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: README — install, modes, commands and keys
+    url: https://github.com/marceljurgiel/aihub-code#readme
+    about: How to install aihub-code, the modes, the slash commands and the keys.
+  - name: Something in the hub windows (models, memory, knowledge…)?
+    url: https://github.com/marceljurgiel/AIhub-TUI/issues
+    about: aihub-code uses AIhub's engine; a problem that AIhub has too belongs there.

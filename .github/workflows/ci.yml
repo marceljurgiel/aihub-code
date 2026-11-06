@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.12
+      - run: uv pip install -e ".[dev]"
+      - run: uv run --no-sync pytest -q
+
+  app:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - working-directory: app
+        run: bun install --frozen-lockfile
+      - working-directory: app
+        run: bunx tsc --noEmit
+      - working-directory: app
+        run: bun test
+        env:
+          # The tests' stand-in bridges are small Python scripts.
+          AIHUB_TEST_PYTHON: python
+
+  installer-unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install from this checkout
+        run: |
+          git archive --prefix=aihub-code-main/ -o "$RUNNER_TEMP/aihub-code.tar.gz" HEAD
+          AIHUB_CODE_SOURCE="$RUNNER_TEMP/aihub-code.tar.gz" bash install.sh
+          ~/.local/bin/aihub-code --version
+
+  installer-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install from this checkout
+        shell: pwsh
+        run: |
+          git archive --format=zip --prefix=aihub-code-main/ -o "$env:RUNNER_TEMP\aihub-code.zip" HEAD
+          $env:AIHUB_CODE_SOURCE = "$env:RUNNER_TEMP\aihub-code.zip"
+          Get-Content install.ps1 -Raw | Invoke-Expression
+          & "$env:LOCALAPPDATA\AIhubCode\bin\aihub-code.cmd" --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
