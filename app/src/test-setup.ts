@@ -20,8 +20,6 @@ process.env.AIHUB_TEST_REAL_HOME = homedir();
 const home = mkdtempSync(join(tmpdir(), "aihub-code-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
-// homeDir() reads AIHUB_CODE_HOME first: one set in the shell would win.
-process.env.AIHUB_CODE_HOME = home;
 
 // The ideal glyphs everywhere, so frames match on Windows too (it would get
 // the console-safe set); glyphs.test.ts checks that set on its own.

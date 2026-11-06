@@ -15,9 +15,17 @@ describe("tests never touch the real ~/.aihub", () => {
   const realAihub = join(real, ".aihub");
   const outside = (p: string) => p !== real && !p.startsWith(realAihub);
   test("homeDir follows the environment at call time", () => {
-    expect(homeDir({ AIHUB_CODE_HOME: "/x/a", HOME: "/x/b" })).toBe("/x/a");
-    expect(homeDir({ HOME: "/x/b" })).toBe("/x/b");
-    expect(homeDir({ USERPROFILE: "C:\\u" })).toBe("C:\\u");
+    expect(homeDir({ HOME: "/x/b" }, "linux")).toBe("/x/b");
+    expect(homeDir({ USERPROFILE: "C:\\u" }, "win32")).toBe("C:\\u");
+  });
+  test("the launcher's AIHUB_CODE_HOME is where aihub-code is installed, never the home", () => {
+    // aihub-code.cmd sets it for the install; settings there would be lost on update.
+    expect(homeDir({ AIHUB_CODE_HOME: "C:\\inst", USERPROFILE: "C:\\u" }, "win32")).toBe("C:\\u");
+    expect(homeDir({ AIHUB_CODE_HOME: "/opt/aihub-code", HOME: "/home/alex" }, "linux")).toBe("/home/alex");
+  });
+  test("Windows: USERPROFILE before HOME, as the engine's Python reads it (Git sets HOME)", () => {
+    expect(homeDir({ HOME: "C:\\git-home", USERPROFILE: "C:\\u" }, "win32")).toBe("C:\\u");
+    expect(homeDir({ HOME: "/home/alex", USERPROFILE: "/elsewhere" }, "linux")).toBe("/home/alex");
   });
   test("under the preload, the app's ~/.aihub paths are not in the real home", () => {
     expect(outside(homeDir())).toBe(true);
@@ -25,8 +33,8 @@ describe("tests never touch the real ~/.aihub", () => {
     expect(outside(configPath())).toBe(true);
     expect(outside(bridgeErrLogPath({ ...process.env, AIHUB_CODE_ERR_LOG: undefined }))).toBe(true);
   });
-  test("the preload points AIHUB_CODE_HOME (read first) at the temp home too", () => {
-    expect(process.env.AIHUB_CODE_HOME).toBe(process.env.HOME);
-    expect(outside(String(process.env.AIHUB_CODE_HOME))).toBe(true);
+  test("the preload points both HOME and USERPROFILE at the temp home", () => {
+    expect(process.env.USERPROFILE).toBe(process.env.HOME);
+    expect(outside(String(process.env.HOME))).toBe(true);
   });
 });
