@@ -6,6 +6,7 @@ import type { Args } from "./args";
 import { launch, type Launched } from "./app";
 import { until } from "./footer/test-utils";
 import { MockBridge } from "./session/mock-bridge";
+import { RESET } from "./terminalColours";
 
 class AppBridge extends MockBridge {
   destroyed = 0;
@@ -83,7 +84,7 @@ describe("the app on a split-footer renderer", () => {
       expect(seqs[0]).toContain("\x1b]11;rgb:");
       t.app.shutdown();
       await t.app.closed;
-      expect(seqs.at(-1)).toBe("\x1b]111\x07\x1b]110\x07");
+      expect(seqs.at(-1)).toBe(RESET);
     } finally {
       applyTheme("terminal");
     }
