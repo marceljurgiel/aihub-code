@@ -25,14 +25,12 @@ Sleep 1.5s
 Type "The tests fail. Find the bug and fix it, then run the tests."
 Sleep 600ms
 Enter
-Wait+Screen@60s /esc to interrupt/
-Wait+Screen@240s /\n *\n╭/
-Sleep 4s
+Wait+Screen@240s /3 passed/
+Sleep 12s
 Type "/undo"
 Sleep 500ms
 Enter
-Wait+Screen@60s /Undo these changes/
-Sleep 4s
+Sleep 5s
 Type "y"
 Sleep 4s
 Type "/exit"

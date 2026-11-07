@@ -23,14 +23,13 @@ Sleep 2.5s
 Enter
 Wait+Screen@90s /shift\+tab mode/
 Sleep 3.5s
-# build → auto: no questions for this fix
+# build -> auto: no questions for this fix
 Shift+Tab
 Sleep 1.5s
 Type "The tests fail. Find the bug and fix it, then run the tests."
 Sleep 600ms
 Enter
-Wait+Screen@60s /esc to interrupt/
-Wait+Screen@240s /\n *\n╭/
-Sleep 6s
+Wait+Screen@240s /3 passed/
+Sleep 12s
 Screenshot out/hero.png
 Sleep 1s

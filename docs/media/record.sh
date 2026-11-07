@@ -6,8 +6,8 @@
 # Needs podman. The server is reached as "gpu-box.lan" inside the recording,
 # so its real address never shows. Tapes: hero approvals plan undo hub themes
 # sessions headless install. MODEL=<name> picks the model (default
-# gemma4:cloud). Each tape writes docs/media/<tape>.mp4 and <tape>.gif (made
-# from the video: VHS's own GIF render needs more memory), some a .png too.
+# gemma4:cloud). Each tape writes docs/media/<tape>.gif (made from the tape's
+# video: VHS's own GIF render needs more memory), some a .png too.
 set -euo pipefail
 : "${OLLAMA_SERVER:?set OLLAMA_SERVER to your Ollama server, e.g. OLLAMA_SERVER=192.0.2.10}"
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -42,7 +42,7 @@ for t in ${@:-hero approvals plan undo hub themes sessions headless install}; do
   podman run --rm -v "$work/out:/out:Z" --entrypoint ffmpeg aihub-code-vhs-base -v error -y -i "/out/$t.mp4" \
     -vf "fps=10,scale=1000:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4" \
     "/out/$t.gif"
-  cp "$work/out/$t".* "$here/"
+  cp "$work/out/$t".gif "$here/"; cp "$work/out/$t".png "$here/" 2>/dev/null || true
 done
 if [ -n "$failed" ]; then
   echo "done, except:$failed — run again with just those"

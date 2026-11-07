@@ -20,7 +20,7 @@ Sleep 400ms
 Enter
 Wait+Screen@90s /shift\+tab mode/
 Sleep 3s
-# build → auto → plan
+# build -> auto -> plan
 Shift+Tab
 Sleep 1s
 Shift+Tab
@@ -28,6 +28,5 @@ Sleep 2s
 Type "How would you add coupon codes to the cart? A short plan; change nothing."
 Sleep 600ms
 Enter
-Wait+Screen@60s /esc to interrupt/
-Wait+Screen@240s /\n *\n╭/
-Sleep 8s
+Wait+Screen@240s /read_file/
+Sleep 40s

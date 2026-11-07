@@ -23,9 +23,8 @@ Sleep 3s
 Type "In one sentence: what does cart.py do?"
 Sleep 600ms
 Enter
-Wait+Screen@60s /esc to interrupt/
-Wait+Screen@240s /\n *\n╭/
-Sleep 3s
+Wait+Screen@240s /read_file/
+Sleep 15s
 Type "/exit"
 Sleep 400ms
 Enter
@@ -34,5 +33,4 @@ Sleep 3s
 Type "aihub-code --continue"
 Sleep 500ms
 Enter
-Wait+Screen@90s /shift\+tab mode/
-Sleep 6s
+Sleep 8s

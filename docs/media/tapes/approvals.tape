@@ -23,21 +23,18 @@ Sleep 3s
 Type "Add a one-line docstring to subtotal() in cart.py. Only that edit; run nothing."
 Sleep 600ms
 Enter
-Wait+Screen@180s /Allow (edit|write)_file/
+Wait+Screen@240s /(edit|write)_file cart/
 Sleep 4s
 Screenshot out/approvals.png
 Sleep 1s
 # "Yes, and don't ask again for edit_file (this project)"
 Type "2"
-Sleep 2.5s
-Wait+Screen@120s /\n *\n╭/
-Sleep 3s
+Sleep 12s
 Type "Now add a one-line docstring to total() too. Only that edit; run nothing."
 Sleep 600ms
 Enter
-Wait+Screen@60s /esc to interrupt/
-Wait+Screen@240s /\n *\n╭/
-Sleep 3s
+Wait+Screen@240s /(edit|write)_file cart[\s\S]*(edit|write)_file cart/
+Sleep 10s
 Type "/rules"
 Sleep 500ms
 Enter
