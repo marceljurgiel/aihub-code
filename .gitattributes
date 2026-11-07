@@ -1,0 +1,6 @@
+# Same line endings on every OS: install.sh must stay LF for bash, and the
+# tests read sources line by line.
+* text=auto eol=lf
+*.gif binary
+*.mp4 binary
+*.png binary

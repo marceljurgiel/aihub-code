@@ -1,6 +1,7 @@
 """The command's own surface and the bridge methods served by AIhub's handlers."""
 import importlib
 import io
+import re
 import sys
 import types
 
@@ -16,7 +17,10 @@ def test_cli_version():
 
 
 def test_cli_help_names_the_flags():
-    out = CliRunner().invoke(app, ["--help"]).output
+    # Typer colours its help when GITHUB_ACTIONS is set (read at import), so
+    # on CI the flags come wrapped in colour codes.
+    raw = CliRunner().invoke(app, ["--help"], env={"COLUMNS": "200"}).output
+    out = re.sub(r"\x1b\[[0-9;]*m", "", raw)
     for flag in ("--prompt", "--mode", "--model", "--output", "--mcp", "--kb", "--resume", "--continue"):
         assert flag in out
 
