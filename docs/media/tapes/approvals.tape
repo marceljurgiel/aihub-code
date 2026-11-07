@@ -20,20 +20,20 @@ Sleep 400ms
 Enter
 Wait+Screen@90s /shift\+tab mode/
 Sleep 3s
-Type "Add a one-line docstring to subtotal() in cart.py. Only that edit; run nothing."
+Type "Add a one-line docstring to test_subtotal in test_cart.py. Only that edit; run nothing."
 Sleep 600ms
 Enter
-Wait+Screen@240s /(edit|write)_file cart/
+Wait+Screen@240s /(edit|write)_file test_cart/
 Sleep 4s
 Screenshot out/approvals.png
 Sleep 1s
 # "Yes, and don't ask again for edit_file (this project)"
 Type "2"
 Sleep 12s
-Type "Now add a one-line docstring to total() too. Only that edit; run nothing."
+Type "Now add one to test_total_without_discount too. Only that edit; run nothing."
 Sleep 600ms
 Enter
-Wait+Screen@240s /(edit|write)_file cart[\s\S]*(edit|write)_file cart/
+Wait+Screen@240s /(edit|write)_file test_cart[\s\S]*(edit|write)_file test_cart/
 Sleep 10s
 Type "/rules"
 Sleep 500ms
