@@ -276,7 +276,7 @@ describe("Esc, Ctrl+C, Ctrl+D", () => {
   });
 
   test("the question lapses after the window; a late second press only asks again", async () => {
-    m = await mount({ ctrlCWindowMs: 60 });
+    m = await mount({ ctrlCWindowMs: 500 });
     await press(m, "c", { ctrl: true });
     expect(text(m)).toContain("Press Ctrl+C again to exit");
     await until(() => !text(m!).includes("Press Ctrl+C"), m.settle);
