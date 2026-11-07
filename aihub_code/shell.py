@@ -165,12 +165,15 @@ def run_shell(command: str, *, cwd: str, timeout: int = 120, max_timeout: int = 
             killed = True
         # A grandchild may still hold the pipe; don't wait for it long.
         reader.join(2 if killed else 0.3)
+        # Decide before closing: on macOS the close wakes the blocked read and
+        # the reader ends at once.
+        orphaned = not killed and reader.is_alive()
         try:
             proc.stdout.close()
         except OSError:
             pass
 
     out = col.result()
-    if not killed and reader.is_alive():
+    if orphaned:
         out += "\n[Background output not captured]"
     return f"{out}\n[Exit: {status or proc.returncode}]"

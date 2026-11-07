@@ -9,6 +9,21 @@ import tarfile
 
 import pytest
 
+
+def _has_bash() -> bool:
+    """A bash that runs scripts. On Windows, `bash` on the PATH may be the WSL
+    launcher with no distribution installed: it answers with an error."""
+    if shutil.which("bash") is None:
+        return False
+    try:
+        r = subprocess.run(["bash", "-c", "echo ok"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and r.stdout.strip() == "ok"
+
+
+_HAS_BASH = _has_bash()
+
 ROOT = os.path.dirname(os.path.dirname(__file__))
 
 
@@ -39,7 +54,7 @@ def test_install_ps1_writes_the_aihub_code_launcher():
     assert '"%~1"=="update"' in ps
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash missing")
+@pytest.mark.skipif(not _HAS_BASH, reason="no working bash")
 def test_install_sh_is_valid_bash():
     r = subprocess.run(["bash", "-n", os.path.join(ROOT, "install.sh")], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
@@ -53,7 +68,7 @@ def test_pyproject_pins_the_released_engine():
 
 # ── behaviour of install.sh (bash, throwaway HOME, nothing downloaded) ────────
 
-bash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash missing")
+bash = pytest.mark.skipif(not _HAS_BASH, reason="no working bash")
 
 
 def _source_tarball(tmp_path):

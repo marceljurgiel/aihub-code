@@ -86,8 +86,8 @@ test("send and cancel write control messages", async () => {
   const script = join(dir, "bridge.py");
   writeFileSync(script, `
 import sys, json
-print(json.dumps({"id": None, "event": "ready", "data": {"version": "1"}}), flush=True)
 f = open(${JSON.stringify(log)}, "a")
+print(json.dumps({"id": None, "event": "ready", "data": {"version": "1"}}), flush=True)
 for line in sys.stdin:
     f.write(line); f.flush()
 `);
