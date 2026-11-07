@@ -17,7 +17,7 @@ mkdir -p "$work/pkg" "$work/out"; chmod 777 "$work/out"
 
 git -C "$root" archive --prefix=aihub-code-main/ -o "$work/pkg/aihub-code.tar.gz" HEAD
 cp "$root/install.sh" "$work/pkg/"
-cp -r "$here/seed" "$here/Containerfile.base" "$here/Containerfile.demo" "$work/"
+cp -r "$here/seed" "$here/Containerfile.base" "$here/Containerfile.demo" "$here/trim.py" "$work/"
 podman build -q -t aihub-code-vhs-base -f "$work/Containerfile.base" "$work" >/dev/null
 podman build -q -t aihub-code-vhs --build-arg "MODEL=${MODEL:-gemma4:cloud}" \
   -f "$work/Containerfile.demo" "$work" >/dev/null
@@ -42,6 +42,11 @@ for t in ${@:-hero approvals plan undo hub themes sessions headless install}; do
   podman run --rm -v "$work/out:/out:Z" --entrypoint ffmpeg aihub-code-vhs-base -v error -y -i "/out/$t.mp4" \
     -vf "fps=10,scale=1000:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4" \
     "/out/$t.gif"
+  # Long still stretches (waiting on the model) shortened to a few seconds;
+  # the installer's output fills only the top of the screen.
+  crop=""; [ "$t" = install ] && crop=370
+  podman run --rm -v "$work/out:/out:Z" -v "$work/trim.py:/trim.py:ro,Z" --entrypoint python3 \
+    aihub-code-vhs-base /trim.py "/out/$t.gif" $crop
   cp "$work/out/$t".gif "$here/"; cp "$work/out/$t".png "$here/" 2>/dev/null || true
 done
 if [ -n "$failed" ]; then

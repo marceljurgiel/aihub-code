@@ -27,7 +27,9 @@ OLLAMA_SERVER=192.0.2.10 docs/media/record.sh undo themes   # some of them
 - Needs podman and an Ollama server with the model (`MODEL=`, default
   `gemma4:cloud`). The server appears as `gpu-box.lan` in the recording.
 - Each tape writes `<tape>.gif` here (made from the tape's video, which needs
-  far less memory than VHS's own GIF output), some a `.png` too.
+  far less memory than VHS's own GIF output), some a `.png` too. `trim.py`
+  then shortens every still stretch, such as waiting on the model, to three
+  seconds.
 - The model answers differently each time; when a take looks odd, record that
   tape again. Look through the frames before committing, for example with
   `ffmpeg -i hero.gif -vf "fps=1/3,scale=700:-1,tile=4x3" sheet.png`.
