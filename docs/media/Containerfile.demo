@@ -1,10 +1,6 @@
-# VHS (terminal recorder) with the demo user "alex", aihub-code installed from
-# this checkout, and a tiny project with a failing test.
-FROM ghcr.io/charmbracelet/vhs:latest
-RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-      curl ca-certificates git python3 python3-pytest python-is-python3 >/dev/null \
- && rm -rf /var/lib/apt/lists/* && useradd -m -s /bin/bash alex
-COPY pkg/ /pkg/
+# aihub-code installed from this checkout, a tiny project with a failing test,
+# and an AIhub setup that points at "gpu-box.lan".
+FROM aihub-code-vhs-base
 USER alex
 WORKDIR /home/alex
 RUN AIHUB_CODE_SOURCE=/pkg/aihub-code.tar.gz bash /pkg/install.sh </dev/null >/tmp/install.log 2>&1 \
@@ -15,8 +11,9 @@ RUN cd /home/alex/shop && git init -q -b main && git add -A \
 ARG MODEL=gemma4:cloud
 # The Ollama server is "gpu-box.lan" in the recording. Memory learning is off,
 # so every request in the video is the agent's own. No Ollama update note.
-RUN mkdir -p /home/alex/.aihub/cache \
+RUN mkdir -p /home/alex/.aihub/cache /home/alex/.aihub/memory \
  && printf 'ollama_api_url: http://gpu-box.lan:11434\ndefault_chat_model: %s\nmemory_enabled: false\n' "$MODEL" > /home/alex/.aihub/config.yaml \
  && printf '{"version": "0.0.0", "checked": %s}' "$(date +%s)" > /home/alex/.aihub/cache/ollama-latest.json \
  && printf '{"theme": "aihub"}\n' > /home/alex/.aihub/aihub-code-settings.json
+COPY --chown=alex:alex seed/demo-memory.md /home/alex/.aihub/memory/memory.md
 USER root

@@ -1,6 +1,6 @@
-# aihub-code demo — fix a failing test, then an edit that asks first.
+# aihub-code demo: start-up, then a failing test found and fixed
 # Recorded with VHS (https://github.com/charmbracelet/vhs); see docs/media/README.md.
-Output out/demo.mp4
+Output out/hero.mp4
 Set Shell bash
 Set FontFamily "JetBrainsMono Nerd Font Mono"
 Set FontSize 15
@@ -23,30 +23,14 @@ Sleep 2.5s
 Enter
 Wait+Screen@90s /shift\+tab mode/
 Sleep 3.5s
-# build → auto: no questions for this task
+# build → auto: no questions for this fix
 Shift+Tab
 Sleep 1.5s
 Type "The tests fail. Find the bug and fix it, then run the tests."
 Sleep 600ms
 Enter
-Wait+Screen@240s /3 passed/
-Sleep 14s
-Screenshot out/demo.png
+Wait+Screen@60s /esc to interrupt/
+Wait+Screen@240s /\n *\n╭/
+Sleep 6s
+Screenshot out/hero.png
 Sleep 1s
-# back to build: edits ask first
-Type "/mode build"
-Sleep 500ms
-Enter
-Sleep 8s
-Type "Add a one-line docstring to test_subtotal in test_cart.py. Only that edit; run nothing."
-Sleep 600ms
-Enter
-# the call is in the transcript; the question about it is in the footer
-Wait+Screen@180s /(edit|write)_file test_cart/
-Sleep 3.5s
-Type "1"
-Sleep 12s
-Type "/exit"
-Sleep 400ms
-Enter
-Sleep 3s
