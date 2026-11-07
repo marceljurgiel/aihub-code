@@ -26,7 +26,7 @@ Sleep 500ms
 Hide
 Enter
 Sleep 2s
-Right
+Type "2"
 Sleep 8s
 Show
 Sleep 2.5s

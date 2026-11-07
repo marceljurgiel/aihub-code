@@ -18,10 +18,10 @@ Sleep 800ms
 Type `aihub-code -p "Why do the tests fail? One sentence." --mode plan`
 Sleep 600ms
 Enter
-Wait@180s
+Wait@180s /^\$$/
 Sleep 3s
 Type `aihub-code -p "Fix the failing test." --mode auto --output json | python3 -m json.tool`
 Sleep 600ms
 Enter
-Wait@240s
+Wait@240s /^\$$/
 Sleep 6s
